@@ -1,0 +1,31 @@
+from . import (
+    agent,
+    auth,
+    categories,
+    commercial_terms,
+    customer_requests,
+    customers,
+    dashboard,
+    history,
+    indicators,
+    orders,
+    products,
+    reports,
+    users,
+)
+
+__all__ = [
+    "auth",
+    "users",
+    "dashboard",
+    "categories",
+    "products",
+    "customers",
+    "orders",
+    "commercial_terms",
+    "indicators",
+    "agent",
+    "reports",
+    "history",
+    "customer_requests",
+]

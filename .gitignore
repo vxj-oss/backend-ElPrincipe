@@ -1,0 +1,28 @@
+# Variables de entorno 
+.env
+.env.*
+!.env.example
+
+# Entorno virtual de Python
+venv/
+.venv/
+
+# Bytecode / caché de Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Dependencias de Node 
+node_modules/
+
+# Logs
+*.log
+
+# Archivos de IDE / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
