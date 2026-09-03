@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
-from sqlalchemy import or_, select
+from sqlalchemy import case, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.category import Categoria
@@ -69,6 +69,7 @@ class CommercialTools:
                 "razon_social": c.razon_social,
                 "documento": doc,
                 "tipo_cliente": c.tipo_cliente,
+                "clasificacion": c.clasificacion,
                 "telefono": getattr(c, "telefono", "—"),
                 "condicion_comercial": {
                     "tiene_condicion": cond is not None,
@@ -302,10 +303,16 @@ class CommercialTools:
 
     @staticmethod
     def get_top_rotation_products(db: Session, limit: int = 5) -> List[Dict[str, Any]]:
+        orden_rotacion = case(
+            (Producto.nivel_rotacion == "Alta", 0),
+            (Producto.nivel_rotacion == "Media", 1),
+            (Producto.nivel_rotacion == "Baja", 2),
+            else_=3,
+        )
         stmt = (
             select(Producto, Categoria.nombre.label("cat_nombre"))
             .outerjoin(Categoria, Producto.categoria_id == Categoria.id)
-            .order_by(Producto.stock_actual.desc())
+            .order_by(orden_rotacion, Producto.stock_actual.desc())
             .limit(limit)
         )
         prods = db.execute(stmt).all()
@@ -313,6 +320,7 @@ class CommercialTools:
             {
                 "sku": p.sku,
                 "nombre": p.nombre,
+                "rotacion": p.nivel_rotacion,
                 "stock": p.stock_actual,
                 "precio": float(p.precio_unitario or 0),
             }
@@ -338,7 +346,7 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "listar_clientes",
-                "description": "Lista la cartera de clientes registrados y sus condiciones comerciales pactadas.",
+                "description": "Lista la cartera de clientes registrados, su tipo (Mayorista/Institucional/Minorista), su clasificación (Regular/VIP) y sus condiciones comerciales pactadas.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -423,7 +431,7 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "productos_mayor_rotacion",
-                "description": "Lista los productos con mayor stock disponible como aproximación de rotación/disponibilidad.",
+                "description": "Lista los productos ordenados por su nivel de rotación registrado en el sistema (Alta, Media, Baja); a igual nivel, desempata por mayor stock disponible.",
                 "parameters": {
                     "type": "object",
                     "properties": {
