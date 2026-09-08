@@ -6,19 +6,26 @@ from sqlalchemy.orm import Session
 from app.models.customer import Cliente
 from app.models.order import Pedido
 from app.models.product import Producto
+from app.services.config_service import ConfigService
 from app.services.indicator_service import IndicatorService
+
+ESTADOS_CONFIRMADOS = ("Aprobado", "Entregado")
 
 
 class DashboardService:
     @staticmethod
     def get_summary(db: Session) -> Dict[str, Any]:
         total_clientes = db.scalar(select(func.count(Cliente.id))) or 0
-        total_productos = db.scalar(select(func.count(Producto.id))) or 0
+        total_productos = db.scalar(
+            select(func.count(Producto.id)).where(Producto.activo.is_(True))
+        ) or 0
         total_pedidos = db.scalar(select(func.count(Pedido.id))) or 0
 
         ventas_totales = (
             db.scalar(
-                select(func.sum(Pedido.monto_total)).where(Pedido.estado != "Cancelado")
+                select(func.sum(Pedido.monto_total)).where(
+                    Pedido.estado.in_(ESTADOS_CONFIRMADOS)
+                )
             )
             or Decimal("0.00")
         )
@@ -33,7 +40,8 @@ class DashboardService:
             db.scalar(select(func.count(Pedido.id)).where(Pedido.estado == "Entregado")) or 0
         )
 
-        indicador_actual = IndicatorService.get_latest(db)
+        m = IndicatorService.calcular_actual(db)
+        meta_diaria = ConfigService.get(db).meta_diaria_ventas
 
         return {
             "metricas": {
@@ -41,6 +49,7 @@ class DashboardService:
                 "total_productos": total_productos,
                 "total_pedidos": total_pedidos,
                 "ventas_totales": float(ventas_totales),
+                "meta_diaria_ventas": float(meta_diaria),
             },
             "pedidos_por_estado": {
                 "pendientes": pedidos_pendientes,
@@ -48,8 +57,8 @@ class DashboardService:
                 "entregados": pedidos_entregados,
             },
             "indicadores_kpi": {
-                "nepp": float(indicador_actual.valor_nepp) if indicador_actual and indicador_actual.valor_nepp else 0.0,
-                "pfcc": float(indicador_actual.valor_pfcc) if indicador_actual and indicador_actual.valor_pfcc else 0.0,
-                "ntdc": float(indicador_actual.valor_ntdc) if indicador_actual and indicador_actual.valor_ntdc else 0.0,
+                "nepp": float(m["valor_nepp"]),
+                "pfcc": float(m["valor_pfcc"]),
+                "ntdc": float(m["valor_ntdc"]),
             },
         }

@@ -1,11 +1,16 @@
+from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.commercial_term import CondicionComercial
+from app.models.commercial_term_failure import FallaCondicionComercial
+from app.models.order import Pedido
 from app.schemas.commercial_term import CommercialTermCreate, CommercialTermUpdate
 from app.services.indicator_service import IndicatorService
+
+ESTADOS_NO_CONFIRMADOS = ("Pendiente",)
 
 
 class CommercialTermService:
@@ -51,9 +56,55 @@ class CommercialTermService:
         return list(db.scalars(stmt).all())
 
     @staticmethod
+    def _reauditar_pedidos_cliente(db: Session, cliente_id: int) -> None:
+        from app.services.order_service import OrderService
+
+        stmt = (
+            select(Pedido)
+            .options(selectinload(Pedido.auditoria_condicion))
+            .where(
+                Pedido.cliente_id == cliente_id,
+                Pedido.estado.in_(ESTADOS_NO_CONFIRMADOS),
+            )
+        )
+        for pedido in db.scalars(stmt).all():
+            evaluacion = OrderService._auditar_condicion_comercial_pedido(
+                db=db,
+                pedido_id=pedido.id,
+                cliente_id=cliente_id,
+                forma_pago=pedido.forma_pago,
+                monto_total=pedido.monto_total,
+            )
+            if pedido.auditoria_condicion:
+                pedido.auditoria_condicion.condicion_comercial_id = evaluacion.condicion_comercial_id
+                pedido.auditoria_condicion.tiene_falla = evaluacion.tiene_falla
+                pedido.auditoria_condicion.motivo_falla = evaluacion.motivo_falla
+                pedido.auditoria_condicion.fecha_evaluacion = datetime.now(timezone.utc)
+            else:
+                db.add(evaluacion)
+
+    @staticmethod
     def create(db: Session, term_in: CommercialTermCreate) -> CondicionComercial:
-        term = CondicionComercial(**term_in.model_dump())
+        datos = term_in.model_dump()
+        existente = db.scalar(
+            select(CondicionComercial).where(
+                CondicionComercial.cliente_id == datos["cliente_id"],
+                CondicionComercial.tipo_condicion == datos["tipo_condicion"],
+            )
+        )
+        if existente:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "El cliente ya tiene una condición de este tipo. "
+                    "Edita la existente en lugar de crear otra."
+                ),
+            )
+
+        term = CondicionComercial(**datos)
         db.add(term)
+        db.flush()
+        CommercialTermService._reauditar_pedidos_cliente(db, term.cliente_id)
         db.commit()
         db.refresh(term)
         IndicatorService.calculate_and_save(
@@ -73,6 +124,11 @@ class CommercialTermService:
             )
         for key, value in term_in.model_dump(exclude_unset=True).items():
             setattr(term, key, value)
+        db.flush()
+        CommercialTermService._reauditar_pedidos_cliente(db, term.cliente_id)
         db.commit()
         db.refresh(term)
-        return term
+        IndicatorService.calculate_and_save(
+            db, resumen="Recálculo automático tras actualización de condición comercial"
+        )
+        return CommercialTermService.get_by_id(db, term_id)

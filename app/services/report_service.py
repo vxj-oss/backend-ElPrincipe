@@ -93,8 +93,12 @@ class ReportService:
         return buffer
 
     @staticmethod
-    def generate_orders_excel(db: Session) -> io.BytesIO:
+    def generate_orders_excel(db: Session, desde=None, hasta=None) -> io.BytesIO:
         stmt = select(Pedido).options(selectinload(Pedido.cliente))
+        if desde is not None:
+            stmt = stmt.where(Pedido.fecha_pedido >= desde)
+        if hasta is not None:
+            stmt = stmt.where(Pedido.fecha_pedido <= hasta)
         orders = db.scalars(stmt).all()
         data = [
             {
@@ -190,7 +194,7 @@ class ReportService:
         return output
 
     @staticmethod
-    def generate_order_errors_excel(db: Session) -> io.BytesIO:
+    def generate_order_errors_excel(db: Session, desde=None, hasta=None) -> io.BytesIO:
         stmt = (
             select(DetallePedido)
             .join(Pedido)
@@ -200,6 +204,10 @@ class ReportService:
             )
             .where(DetallePedido.tiene_error == True)
         )
+        if desde is not None:
+            stmt = stmt.where(Pedido.fecha_pedido >= desde)
+        if hasta is not None:
+            stmt = stmt.where(Pedido.fecha_pedido <= hasta)
         detalles_error = db.scalars(stmt).all()
         data = [
             {
@@ -278,7 +286,11 @@ class ReportService:
                 "Valor Numérico": round(ntdc / 100, 4),
                 "Formato Presentación": f"{round(ntdc, 2)}%",
                 "Meta": "≥ 75%",
-                "Detalle Muestra": f"{indicador.total_decisiones_efectivas} decisiones efectivas de {indicador.total_decisiones_evaluadas} evaluadas",
+                "Detalle Muestra": (
+                    f"{indicador.total_decisiones_efectivas} decisiones efectivas de "
+                    f"{indicador.total_decisiones_evaluadas} registradas "
+                    f"({indicador.total_decisiones_corregidas} corregidas tras incidencia)"
+                ),
             },
         ]
         df = pd.DataFrame(data)
@@ -289,8 +301,12 @@ class ReportService:
         return output
 
     @staticmethod
-    def generate_orders_pdf(db: Session) -> io.BytesIO:
+    def generate_orders_pdf(db: Session, desde=None, hasta=None) -> io.BytesIO:
         stmt = select(Pedido).options(selectinload(Pedido.cliente))
+        if desde is not None:
+            stmt = stmt.where(Pedido.fecha_pedido >= desde)
+        if hasta is not None:
+            stmt = stmt.where(Pedido.fecha_pedido <= hasta)
         orders = db.scalars(stmt).all()
         columnas = ["Código", "Cliente", "Fecha", "Forma Pago", "Estado", "Total (S/)"]
         filas = [
@@ -352,7 +368,7 @@ class ReportService:
         return ReportService._crear_pdf_base("Cartera de Clientes", columnas, filas)
 
     @staticmethod
-    def generate_order_errors_pdf(db: Session) -> io.BytesIO:
+    def generate_order_errors_pdf(db: Session, desde=None, hasta=None) -> io.BytesIO:
         stmt = (
             select(DetallePedido)
             .join(Pedido)
@@ -362,6 +378,10 @@ class ReportService:
             )
             .where(DetallePedido.tiene_error == True)
         )
+        if desde is not None:
+            stmt = stmt.where(Pedido.fecha_pedido >= desde)
+        if hasta is not None:
+            stmt = stmt.where(Pedido.fecha_pedido <= hasta)
         detalles_error = db.scalars(stmt).all()
         columnas = ["N° Pedido", "Cliente", "Producto", "Cant.", "Tipo Error", "Fecha"]
         filas = [

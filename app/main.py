@@ -24,6 +24,8 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Servidor detenido.")
 
+_docs_habilitados = not settings.IS_PRODUCTION
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -31,9 +33,9 @@ app = FastAPI(
         "Backend del Agente Conversacional para la toma de decisiones en ventas. "
         "EL PRÍNCIPE — Trujillo 2026."
     ),
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    docs_url="/docs" if _docs_habilitados else None,
+    redoc_url="/redoc" if _docs_habilitados else None,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json" if _docs_habilitados else None,
     debug=settings.DEBUG,
     lifespan=lifespan,
 )

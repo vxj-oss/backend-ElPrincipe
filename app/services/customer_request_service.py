@@ -249,7 +249,10 @@ class SolicitudClienteService:
                     if todas_discrepancias
                     else "Revisión requerida."
                 ),
-                analisis_ia=respuesta_ia,
+                analisis_ia=(
+                    "El asistente de IA no está disponible en este momento; "
+                    "se aplicaron solo las validaciones automáticas del sistema."
+                ),
                 sugerencias_correccion=sugerencias_condicion
                 or [
                     "Verificar cantidades, condiciones comerciales y precios antes de guardar."

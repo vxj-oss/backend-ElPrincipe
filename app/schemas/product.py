@@ -17,6 +17,7 @@ class ProductBase(BaseModel):
     stock_actual: int = Field(default=0, ge=0)
     stock_minimo: int = Field(default=5, ge=0)
     nivel_rotacion: Literal["Alta", "Media", "Baja"] = "Media"
+    activo: bool = True
 
 
 class ProductCreate(ProductBase):

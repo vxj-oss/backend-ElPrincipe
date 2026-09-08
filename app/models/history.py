@@ -17,7 +17,17 @@ class HistorialAuditoria(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     usuario_id: Mapped[Optional[int]] = mapped_column(ForeignKey("usuarios.id"), nullable=True)
     accion: Mapped[str] = mapped_column(
-        Enum("CREAR", "ACTUALIZAR", "ELIMINAR", "CONSULTA_IA", name="accion_auditoria_enum"),
+        Enum(
+            "CREAR",
+            "ACTUALIZAR",
+            "ELIMINAR",
+            "CONSULTA_IA",
+            "INICIAR_SESION",
+            "CERRAR_SESION",
+            "EXPORTAR",
+            "ERROR",
+            name="accion_auditoria_enum",
+        ),
         nullable=False,
     )
     modulo_afectado: Mapped[str] = mapped_column(String(100), nullable=False)

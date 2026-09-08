@@ -55,12 +55,22 @@ class CommercialTools:
     def get_all_customers_summary(db: Session, limit: int = 15) -> List[Dict[str, Any]]:
         stmt = select(Cliente).order_by(Cliente.id.desc()).limit(limit)
         clientes = db.scalars(stmt).all()
+
+        ids = [c.id for c in clientes]
+        condiciones_por_cliente: Dict[int, Any] = {}
+        if ids:
+            for cond_row in db.scalars(
+                select(CondicionComercial)
+                .where(CondicionComercial.cliente_id.in_(ids))
+                .order_by(CondicionComercial.id.asc())
+            ).all():
+                condiciones_por_cliente[cond_row.cliente_id] = cond_row
+
         resultado = []
         for c in clientes:
             doc = getattr(c, "ruc_dni", None) or getattr(c, "numero_documento", "—")
-            stmt_cond = select(CondicionComercial).where(CondicionComercial.cliente_id == c.id)
-            cond = db.scalar(stmt_cond)
-            
+            cond = condiciones_por_cliente.get(c.id)
+
             descuento_registrado = f"{float(cond.porcentaje_descuento)}%" if cond and cond.porcentaje_descuento else "Sin descuento pactado (0%)"
             plazo_registrado = f"{cond.dias_plazo_pactados} días" if cond and cond.dias_plazo_pactados else "Contado / No registrado"
 
@@ -283,11 +293,13 @@ class CommercialTools:
                 "valor_porcentaje": float(ultimo.valor_ntdc or 0),
                 "total_decisiones_efectivas": ultimo.total_decisiones_efectivas,
                 "total_decisiones_evaluadas": ultimo.total_decisiones_evaluadas,
+                "total_decisiones_corregidas": ultimo.total_decisiones_corregidas,
                 "meta": "75% o más es bueno; entre 50% y 74% es regular; menor a 50% es crítico.",
                 "criterio": (
-                    "Una decisión es efectiva cuando el pedido se confirma sin errores ni fallas "
-                    "de condición comercial. Es no efectiva cuando el asesor confirma el pedido "
-                    "a pesar de tener un error o falla detectada."
+                    "Cada pedido registrado (salvo los cancelados) cuenta como una decisión comercial. "
+                    "Es efectiva cuando el pedido no mantiene errores de ítem ni fallas de condición "
+                    "comercial. Se evalúa en vivo: si el asesor corrige la incidencia, la decisión pasa "
+                    "a efectiva y se marca como 'corregida'."
                 ),
                 "decisiones_no_efectivas_recientes": [
                     {
