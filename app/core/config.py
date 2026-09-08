@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "El Príncipe - Agente de Ventas"
     APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
+    DEBUG: bool = False
     ENVIRONMENT: str = "development"
     API_V1_STR: str = "/api/v1"
 
@@ -45,7 +45,14 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
+    def IS_PRODUCTION(self) -> bool:
+        return self.ENVIRONMENT == "production"
+
+    @computed_field
+    @property
     def CORS_ORIGINS(self) -> List[str]:
+        if self.IS_PRODUCTION:
+            return [self.FRONTEND_URL]
         return [
             self.FRONTEND_URL,
             "http://localhost:3000",

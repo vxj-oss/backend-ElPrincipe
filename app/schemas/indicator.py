@@ -14,6 +14,7 @@ class IndicatorLogBase(BaseModel):
     valor_pfcc: Optional[Decimal] = Field(None, decimal_places=4)
     total_decisiones_evaluadas: int = 0
     total_decisiones_efectivas: int = 0
+    total_decisiones_corregidas: int = 0
     valor_ntdc: Optional[Decimal] = Field(None, decimal_places=4)
     resumen_operativo: Optional[str] = None
 

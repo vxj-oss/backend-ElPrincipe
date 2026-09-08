@@ -17,7 +17,9 @@ class DecisionComercial(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"), nullable=False)
-    pedido_id: Mapped[Optional[int]] = mapped_column(ForeignKey("pedidos.id"), nullable=True)
+    pedido_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("pedidos.id", ondelete="CASCADE"), nullable=True
+    )
     mensaje_agente_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("mensajes_agente.id"), nullable=True
     )
@@ -35,6 +37,9 @@ class DecisionComercial(Base):
     recomendacion_ia: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     decision_tomada: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     es_efectiva: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    requirio_correccion: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     observaciones_impacto: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     fecha_decision: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True

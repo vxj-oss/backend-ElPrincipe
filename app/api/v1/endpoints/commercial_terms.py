@@ -1,5 +1,5 @@
 ﻿from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user
@@ -11,6 +11,7 @@ from app.schemas.commercial_term import (
     CommercialTermUpdate,
 )
 from app.services.commercial_term_service import CommercialTermService
+from app.services.history_service import HistoryService
 
 router = APIRouter(prefix="/commercial-terms", tags=["Condiciones Comerciales"])
 
@@ -72,10 +73,23 @@ def get_term(
 )
 def create_term(
     term_in: CommercialTermCreate,
+    request: Request,
     db: Session = Depends(get_db),
-    _: Usuario = Depends(get_current_active_user),
+    current_user: Usuario = Depends(get_current_active_user),
 ):
-    return CommercialTermService.create(db, term_in)
+    term = CommercialTermService.create(db, term_in)
+    HistoryService.log(
+        db, "CREAR", "Condiciones", current_user.id,
+        {
+            "entidad": f"Cliente {term.cliente_id}",
+            "descripcion": (
+                f"Pactó condición {term.tipo_condicion} para el cliente "
+                f"{term.cliente.razon_social if term.cliente else term.cliente_id}"
+            ),
+        },
+        request.client.host if request.client else None,
+    )
+    return term
 
 
 @router.put(
@@ -86,7 +100,20 @@ def create_term(
 def update_term(
     term_id: int,
     term_in: CommercialTermUpdate,
+    request: Request,
     db: Session = Depends(get_db),
-    _: Usuario = Depends(get_current_active_user),
+    current_user: Usuario = Depends(get_current_active_user),
 ):
-    return CommercialTermService.update(db, term_id, term_in)
+    term = CommercialTermService.update(db, term_id, term_in)
+    HistoryService.log(
+        db, "ACTUALIZAR", "Condiciones", current_user.id,
+        {
+            "entidad": f"Condición {term_id}",
+            "descripcion": (
+                f"Actualizó la condición {term.tipo_condicion} del cliente "
+                f"{term.cliente.razon_social if term.cliente else term.cliente_id}"
+            ),
+        },
+        request.client.host if request.client else None,
+    )
+    return term

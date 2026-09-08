@@ -1,10 +1,11 @@
 ﻿from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user
 from app.core.database import get_db
+from app.core.limiter import limiter
 from app.models.agent_session import SesionAgente
 from app.models.user import Usuario
 from app.schemas.agent import (
@@ -23,7 +24,9 @@ router = APIRouter(prefix="/agent", tags=["Agente IA"])
     response_model=AgentQueryResponse,
     summary="Interactuar con el agente comercial inteligente",
 )
+@limiter.limit("15/minute")
 def chat_with_agent(
+    request: Request,
     payload: AgentQueryRequest,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_active_user),

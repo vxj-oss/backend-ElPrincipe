@@ -16,7 +16,7 @@ class OrderItemBase(BaseModel):
 class OrderItemCreate(BaseModel):
     producto_id: int
     cantidad: int = Field(default=1, gt=0)
-    precio_unitario: Decimal = Field(default=Decimal("0.00"), ge=0, decimal_places=2)
+    precio_unitario: Decimal = Field(..., gt=0, decimal_places=2)
     subtotal: Optional[Decimal] = None
     tiene_error: bool = False
     tipo_error: Optional[str] = "Ninguno"
@@ -32,8 +32,17 @@ class OrderItemUpdate(BaseModel):
     descripcion_error: Optional[str] = None
 
 
+class ProductoMini(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    nombre: str
+    sku: Optional[str] = None
+
+
 class OrderItemResponse(OrderItemBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     pedido_id: int
+    producto: Optional[ProductoMini] = None

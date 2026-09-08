@@ -53,12 +53,22 @@ class OrderUpdate(BaseModel):
     auditoria_condicion: Optional[CommercialTermFailureCreate] = None
 
 
+class StockAlertItem(BaseModel):
+    producto_id: int
+    nombre: str
+    stock_actual: int
+    stock_minimo: int
+    agotado: bool = False
+
+
 class OrderResponse(OrderBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     creado_en: Optional[datetime] = None
+    stock_descontado: bool = False
     cliente: Optional[CustomerResponse] = None
     usuario: Optional[UserResponse] = None
     detalles: List[OrderItemResponse] = []
     auditoria_condicion: Optional[CommercialTermFailureResponse] = None
+    alertas_stock: List[StockAlertItem] = []

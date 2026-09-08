@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user
@@ -12,6 +12,7 @@ from app.schemas.customer_request import (
     SolicitudClienteResponse,
 )
 from app.services.customer_request_service import SolicitudClienteService
+from app.services.history_service import HistoryService
 
 router = APIRouter(prefix="/customer-requests", tags=["Solicitudes de Clientes"])
 
@@ -24,12 +25,25 @@ router = APIRouter(prefix="/customer-requests", tags=["Solicitudes de Clientes"]
 )
 def create_customer_request(
     payload: SolicitudClienteCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_active_user),
 ):
-    return SolicitudClienteService.create_request(
+    solicitud = SolicitudClienteService.create_request(
         db=db, user_id=current_user.id, payload=payload
     )
+    HistoryService.log(
+        db, "CREAR", "Solicitudes", current_user.id,
+        {
+            "entidad": solicitud.codigo_solicitud,
+            "descripcion": (
+                f"Registró la solicitud {solicitud.codigo_solicitud} "
+                f"({len(solicitud.detalles)} ítem(s)) por canal {solicitud.canal_recepcion}"
+            ),
+        },
+        request.client.host if request.client else None,
+    )
+    return solicitud
 
 
 @router.get(

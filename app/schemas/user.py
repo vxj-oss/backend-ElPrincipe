@@ -54,6 +54,16 @@ class UserUpdate(BaseModel):
         return _validate_password_complexity(v) if v is not None else v
 
 
+class PasswordChangeRequest(BaseModel):
+    actual: str = Field(..., min_length=1)
+    nueva: str = Field(..., min_length=8, max_length=100)
+
+    @field_validator("nueva")
+    @classmethod
+    def _check_nueva(cls, v: str) -> str:
+        return _validate_password_complexity(v)
+
+
 class UserResponse(UserBase):
     model_config = ConfigDict(from_attributes=True)
 

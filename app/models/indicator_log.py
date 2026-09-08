@@ -13,7 +13,11 @@ class RegistroIndicador(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     fecha_calculo: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+        index=True,
     )
     # NEPP: Número de Errores en Productos Pedidos = total_errores_productos / total_items_pedidos
     total_pedidos_evaluados: Mapped[int] = mapped_column(nullable=False, default=0)
@@ -27,5 +31,8 @@ class RegistroIndicador(Base):
     # NTDC: Nivel de Toma de Decisiones Comerciales = (total_decisiones_efectivas / total_decisiones_evaluadas) * 100
     total_decisiones_evaluadas: Mapped[int] = mapped_column(nullable=False, default=0)
     total_decisiones_efectivas: Mapped[int] = mapped_column(nullable=False, default=0)
+    total_decisiones_corregidas: Mapped[int] = mapped_column(
+        nullable=False, default=0, server_default="0"
+    )
     valor_ntdc: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 4), nullable=True)
     resumen_operativo: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

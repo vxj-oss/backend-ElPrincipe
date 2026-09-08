@@ -141,12 +141,22 @@ def delete_order(
 def register_order_error(
     order_id: int,
     payload: dict,
+    request: Request,
     db: Session = Depends(get_db),
-    _: Usuario = Depends(get_current_active_user),
+    current_user: Usuario = Depends(get_current_active_user),
 ):
     tipo_error = payload.get("tipo_error", "Error_No_Especificado")
     descripcion = payload.get("descripcion", "")
-    return OrderService.marcar_error(db, order_id, tipo_error, descripcion)
+    order = OrderService.marcar_error(db, order_id, tipo_error, descripcion)
+    HistoryService.log(
+        db, "ERROR", "Pedidos", current_user.id,
+        {
+            "entidad": order.codigo_pedido,
+            "descripcion": f"Marcó el pedido {order.codigo_pedido} con error ({order.detalles[0].tipo_error if order.detalles else tipo_error}): {descripcion}",
+        },
+        request.client.host if request.client else None,
+    )
+    return order
 
 
 @router.patch(
@@ -156,7 +166,14 @@ def register_order_error(
 )
 def clear_order_error(
     order_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    _: Usuario = Depends(get_current_active_user),
+    current_user: Usuario = Depends(get_current_active_user),
 ):
-    return OrderService.limpiar_error(db, order_id)
+    order = OrderService.limpiar_error(db, order_id)
+    HistoryService.log(
+        db, "ACTUALIZAR", "Pedidos", current_user.id,
+        {"entidad": order.codigo_pedido, "descripcion": f"Removió el error del pedido {order.codigo_pedido}"},
+        request.client.host if request.client else None,
+    )
+    return order

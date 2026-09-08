@@ -35,12 +35,14 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     user_id = payload.get("sub")
-    if not user_id:
+    try:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No se pudo validar el identificador del usuario",
         )
-    user = UserService.get_by_id(db, int(user_id))
+    user = UserService.get_by_id(db, user_id_int)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

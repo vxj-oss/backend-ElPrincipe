@@ -5,7 +5,6 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.commercial_term import CondicionComercial
 from app.models.commercial_term_failure import FallaCondicionComercial
 from app.models.decision import DecisionComercial
 from app.models.indicator_log import RegistroIndicador
@@ -17,78 +16,139 @@ LIMA_TZ = ZoneInfo("America/Lima")
 
 class IndicatorService:
     @staticmethod
-    def calculate_and_save(db: Session, resumen: Optional[str] = None) -> RegistroIndicador:
-        # 1. NEPP: Número de Errores en Productos Pedidos
-        total_items = db.scalar(select(func.count(DetallePedido.id))) or 0
-        total_errores_prod = (
+    def calcular_actual(db: Session) -> dict:
+        """Cálculo global en vivo de NEPP, PFCC y NTDC sobre todos los registros
+        no cancelados, con el mismo criterio que las series por rango."""
+        total_items = (
             db.scalar(
-                select(func.count(DetallePedido.id)).where(DetallePedido.tiene_error.is_(True))
+                select(func.count(DetallePedido.id))
+                .join(Pedido, Pedido.id == DetallePedido.pedido_id)
+                .where(Pedido.estado != "Cancelado")
             )
             or 0
         )
-        total_pedidos = db.scalar(select(func.count(Pedido.id))) or 0
+        total_errores_prod = (
+            db.scalar(
+                select(func.count(DetallePedido.id))
+                .join(Pedido, Pedido.id == DetallePedido.pedido_id)
+                .where(Pedido.estado != "Cancelado", DetallePedido.tiene_error.is_(True))
+            )
+            or 0
+        )
+        total_pedidos = (
+            db.scalar(select(func.count(Pedido.id)).where(Pedido.estado != "Cancelado")) or 0
+        )
         val_nepp = (
             Decimal(str(round(total_errores_prod / total_items, 4)))
             if total_items > 0
             else Decimal("0.0000")
         )
 
-        # 2. PFCC: Porcentaje de Fallas en Condiciones Comerciales
-        # TCCD = total de condiciones comerciales definidas (módulo Condiciones Comerciales)
-        total_evaluaciones_cc = db.scalar(select(func.count(CondicionComercial.id))) or 0
-        # TCCF = condiciones que registraron al menos una falla en la auditoría de pedidos
-        total_fallas_cc = (
+        cc_evaluadas = (
             db.scalar(
-                select(
-                    func.count(func.distinct(FallaCondicionComercial.condicion_comercial_id))
-                ).where(FallaCondicionComercial.tiene_falla.is_(True))
+                select(func.count(FallaCondicionComercial.id))
+                .join(Pedido, Pedido.id == FallaCondicionComercial.pedido_id)
+                .where(Pedido.estado != "Cancelado")
             )
             or 0
         )
-        val_pfcc = (
-            Decimal(str(round((total_fallas_cc / total_evaluaciones_cc) * 100, 4)))
-            if total_evaluaciones_cc > 0
-            else Decimal("0.0000")
-        )
-
-        # 3. NTDC: Nivel de Toma de Decisiones Comerciales
-        total_decisiones = db.scalar(select(func.count(DecisionComercial.id))) or 0
-        total_efectivas = (
+        cc_falladas = (
             db.scalar(
-                select(func.count(DecisionComercial.id)).where(
-                    DecisionComercial.es_efectiva.is_(True)
+                select(func.count(FallaCondicionComercial.id))
+                .join(Pedido, Pedido.id == FallaCondicionComercial.pedido_id)
+                .where(
+                    Pedido.estado != "Cancelado",
+                    FallaCondicionComercial.tiene_falla.is_(True),
                 )
             )
             or 0
         )
+        val_pfcc = (
+            Decimal(str(round((cc_falladas / cc_evaluadas) * 100, 4)))
+            if cc_evaluadas > 0
+            else Decimal("0.0000")
+        )
+
+        def _contar_decisiones(*filtros) -> int:
+            return (
+                db.scalar(
+                    select(func.count(DecisionComercial.id))
+                    .join(Pedido, Pedido.id == DecisionComercial.pedido_id)
+                    .where(
+                        DecisionComercial.pedido_id.isnot(None),
+                        Pedido.estado != "Cancelado",
+                        *filtros,
+                    )
+                )
+                or 0
+            )
+
+        total_decisiones = _contar_decisiones()
+        total_efectivas = _contar_decisiones(DecisionComercial.es_efectiva.is_(True))
+        total_corregidas = _contar_decisiones(DecisionComercial.requirio_correccion.is_(True))
         val_ntdc = (
             Decimal(str(round((total_efectivas / total_decisiones) * 100, 4)))
             if total_decisiones > 0
             else Decimal("0.0000")
         )
 
-        log = RegistroIndicador(
-            total_pedidos_evaluados=total_pedidos,
-            total_items_pedidos=total_items,
-            total_errores_productos=total_errores_prod,
-            valor_nepp=val_nepp,
-            total_condiciones_pactadas=total_evaluaciones_cc,
-            total_fallas_condiciones=total_fallas_cc,
-            valor_pfcc=val_pfcc,
-            total_decisiones_evaluadas=total_decisiones,
-            total_decisiones_efectivas=total_efectivas,
-            valor_ntdc=val_ntdc,
-            resumen_operativo=resumen or "Cálculo global de indicadores de desempeño",
+        return {
+            "total_pedidos_evaluados": total_pedidos,
+            "total_items_pedidos": total_items,
+            "total_errores_productos": total_errores_prod,
+            "valor_nepp": val_nepp,
+            "total_condiciones_pactadas": cc_evaluadas,
+            "total_fallas_condiciones": cc_falladas,
+            "valor_pfcc": val_pfcc,
+            "total_decisiones_evaluadas": total_decisiones,
+            "total_decisiones_efectivas": total_efectivas,
+            "total_decisiones_corregidas": total_corregidas,
+            "valor_ntdc": val_ntdc,
+        }
+
+    @staticmethod
+    def calculate_and_save(db: Session, resumen: Optional[str] = None) -> RegistroIndicador:
+        from app.services.decision_service import DecisionService
+
+        DecisionService.sincronizar_pedidos(db)
+        db.flush()
+        m = IndicatorService.calcular_actual(db)
+
+        hoy_lima = datetime.now(LIMA_TZ).date()
+        inicio = datetime.combine(hoy_lima, time.min, tzinfo=LIMA_TZ)
+        fin = datetime.combine(hoy_lima, time.max, tzinfo=LIMA_TZ)
+        log = db.scalar(
+            select(RegistroIndicador)
+            .where(RegistroIndicador.fecha_calculo >= inicio, RegistroIndicador.fecha_calculo <= fin)
+            .order_by(RegistroIndicador.id.desc())
         )
-        db.add(log)
+
+        if log is None:
+            log = RegistroIndicador()
+            db.add(log)
+
+        log.total_pedidos_evaluados = m["total_pedidos_evaluados"]
+        log.total_items_pedidos = m["total_items_pedidos"]
+        log.total_errores_productos = m["total_errores_productos"]
+        log.valor_nepp = m["valor_nepp"]
+        log.total_condiciones_pactadas = m["total_condiciones_pactadas"]
+        log.total_fallas_condiciones = m["total_fallas_condiciones"]
+        log.valor_pfcc = m["valor_pfcc"]
+        log.total_decisiones_evaluadas = m["total_decisiones_evaluadas"]
+        log.total_decisiones_efectivas = m["total_decisiones_efectivas"]
+        log.total_decisiones_corregidas = m["total_decisiones_corregidas"]
+        log.valor_ntdc = m["valor_ntdc"]
+        log.resumen_operativo = resumen or "Cálculo global de indicadores de desempeño"
+
         db.commit()
         db.refresh(log)
         return log
 
     @staticmethod
-    def get_latest(db: Session) -> Optional[RegistroIndicador]:
-        stmt = select(RegistroIndicador).order_by(RegistroIndicador.fecha_calculo.desc())
-        return db.scalar(stmt)
+    def get_latest(db: Session) -> RegistroIndicador:
+        return IndicatorService.calculate_and_save(
+            db, resumen="Cálculo automático de indicadores"
+        )
 
     @staticmethod
     def get_all(db: Session, limit: int = 30) -> List[RegistroIndicador]:
@@ -108,7 +168,11 @@ class IndicatorService:
             db.scalar(
                 select(func.count(DetallePedido.id))
                 .join(Pedido, Pedido.id == DetallePedido.pedido_id)
-                .where(Pedido.fecha_pedido >= inicio, Pedido.fecha_pedido <= fin)
+                .where(
+                    Pedido.fecha_pedido >= inicio,
+                    Pedido.fecha_pedido <= fin,
+                    Pedido.estado != "Cancelado",
+                )
             )
             or 0
         )
@@ -119,6 +183,7 @@ class IndicatorService:
                 .where(
                     Pedido.fecha_pedido >= inicio,
                     Pedido.fecha_pedido <= fin,
+                    Pedido.estado != "Cancelado",
                     DetallePedido.tiene_error.is_(True),
                 )
             )
@@ -130,18 +195,24 @@ class IndicatorService:
 
         cc_evaluadas = (
             db.scalar(
-                select(func.count(func.distinct(FallaCondicionComercial.condicion_comercial_id))).where(
-                    FallaCondicionComercial.fecha_evaluacion >= inicio,
-                    FallaCondicionComercial.fecha_evaluacion <= fin,
+                select(func.count(FallaCondicionComercial.id))
+                .join(Pedido, Pedido.id == FallaCondicionComercial.pedido_id)
+                .where(
+                    Pedido.fecha_pedido >= inicio,
+                    Pedido.fecha_pedido <= fin,
+                    Pedido.estado != "Cancelado",
                 )
             )
             or 0
         )
         cc_falladas = (
             db.scalar(
-                select(func.count(func.distinct(FallaCondicionComercial.condicion_comercial_id))).where(
-                    FallaCondicionComercial.fecha_evaluacion >= inicio,
-                    FallaCondicionComercial.fecha_evaluacion <= fin,
+                select(func.count(FallaCondicionComercial.id))
+                .join(Pedido, Pedido.id == FallaCondicionComercial.pedido_id)
+                .where(
+                    Pedido.fecha_pedido >= inicio,
+                    Pedido.fecha_pedido <= fin,
+                    Pedido.estado != "Cancelado",
                     FallaCondicionComercial.tiene_falla.is_(True),
                 )
             )
@@ -153,18 +224,26 @@ class IndicatorService:
 
         total_decisiones = (
             db.scalar(
-                select(func.count(DecisionComercial.id)).where(
-                    DecisionComercial.fecha_decision >= inicio,
-                    DecisionComercial.fecha_decision <= fin,
+                select(func.count(DecisionComercial.id))
+                .join(Pedido, Pedido.id == DecisionComercial.pedido_id)
+                .where(
+                    Pedido.fecha_pedido >= inicio,
+                    Pedido.fecha_pedido <= fin,
+                    DecisionComercial.pedido_id.isnot(None),
+                    Pedido.estado != "Cancelado",
                 )
             )
             or 0
         )
         decisiones_efectivas = (
             db.scalar(
-                select(func.count(DecisionComercial.id)).where(
-                    DecisionComercial.fecha_decision >= inicio,
-                    DecisionComercial.fecha_decision <= fin,
+                select(func.count(DecisionComercial.id))
+                .join(Pedido, Pedido.id == DecisionComercial.pedido_id)
+                .where(
+                    Pedido.fecha_pedido >= inicio,
+                    Pedido.fecha_pedido <= fin,
+                    DecisionComercial.pedido_id.isnot(None),
+                    Pedido.estado != "Cancelado",
                     DecisionComercial.es_efectiva.is_(True),
                 )
             )

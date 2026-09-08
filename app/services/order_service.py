@@ -1,17 +1,18 @@
 import uuid
-from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.time import ahora_lima
 from app.models.commercial_term import CondicionComercial
 from app.models.commercial_term_failure import FallaCondicionComercial
 from app.models.customer_request import SolicitudCliente
 from app.models.order import Pedido
 from app.models.order_item import DetallePedido
 from app.models.product import Producto
+from app.models.stock_movement import MovimientoStock
 from app.schemas.customer_request import (
     ComparacionPedidoItem,
     ComparacionPedidoRequest,
@@ -23,6 +24,22 @@ from app.services.decision_service import DecisionService
 from app.services.indicator_service import IndicatorService
 
 ESTADOS_CONFIRMADOS = ("Aprobado", "Entregado")
+TIPOS_ERROR_DETALLE_VALIDOS = {
+    "Ninguno",
+    "SKU_Incorrecto",
+    "Precio_Desactualizado",
+    "Stock_Insuficiente",
+    "Cantidad_Erronea",
+}
+
+
+def normalizar_tipo_error(valor: Optional[str]) -> str:
+    if not valor:
+        return "Ninguno"
+    limpio = valor.strip()
+    if limpio in TIPOS_ERROR_DETALLE_VALIDOS:
+        return limpio
+    return "Cantidad_Erronea"
 
 
 class OrderService:
@@ -93,6 +110,102 @@ class OrderService:
                 else "Condición comercial conforme con la política pactada."
             ),
         )
+
+    @staticmethod
+    def _items_tuplas(detalles) -> List[tuple]:
+        return [(d.producto_id, d.cantidad) for d in detalles]
+
+    @staticmethod
+    def _revertir_solicitud(db: Session, solicitud_id: Optional[int]) -> None:
+        if not solicitud_id:
+            return
+        solicitud = db.scalar(
+            select(SolicitudCliente).where(SolicitudCliente.id == solicitud_id)
+        )
+        if solicitud and solicitud.estado == "Atendida":
+            solicitud.estado = "Pendiente"
+
+    @staticmethod
+    def _descuento_pactado(db: Session, cliente_id: int) -> Decimal:
+        politica = db.scalar(
+            select(CondicionComercial)
+            .where(CondicionComercial.cliente_id == cliente_id)
+            .order_by(CondicionComercial.id.desc())
+        )
+        if politica and politica.porcentaje_descuento:
+            return Decimal(str(politica.porcentaje_descuento))
+        return Decimal("0")
+
+    @staticmethod
+    def _evaluar_precio(precio_digitado: Decimal, prod: Producto, descuento_pct: Decimal):
+        vigente = Decimal(str(prod.precio_unitario or 0))
+        minimo = (vigente * (Decimal("100") - descuento_pct) / Decimal("100")).quantize(Decimal("0.01"))
+        digitado = Decimal(str(precio_digitado))
+        if digitado > vigente + Decimal("0.01"):
+            return (
+                f"Precio digitado S/ {digitado:.2f} supera el precio vigente S/ {vigente:.2f}."
+            )
+        if digitado < minimo - Decimal("0.01"):
+            extra = f" (descuento pactado {descuento_pct:.0f}%)" if descuento_pct > 0 else ""
+            return (
+                f"Precio digitado S/ {digitado:.2f} es menor al mínimo autorizado S/ {minimo:.2f}{extra}."
+            )
+        return None
+
+    @staticmethod
+    def _mover_stock(
+        db: Session,
+        items: List[tuple],
+        signo: int,
+        pedido_id: Optional[int] = None,
+        motivo: Optional[str] = None,
+    ) -> None:
+        tipo = "Salida" if signo < 0 else "Entrada"
+        for producto_id, cantidad in items:
+            prod = db.scalar(
+                select(Producto).where(Producto.id == producto_id).with_for_update()
+            )
+            if not prod:
+                continue
+            anterior = prod.stock_actual or 0
+            nuevo = max(0, anterior + signo * cantidad)
+            prod.stock_actual = nuevo
+            db.add(
+                MovimientoStock(
+                    producto_id=producto_id,
+                    pedido_id=pedido_id,
+                    tipo=tipo,
+                    cantidad=cantidad,
+                    stock_anterior=anterior,
+                    stock_nuevo=nuevo,
+                    motivo=motivo,
+                )
+            )
+
+    @staticmethod
+    def _alertas_stock_de_items(db: Session, items: List[tuple]) -> List[dict]:
+        alertas = []
+        vistos = set()
+        for producto_id, _ in items:
+            if producto_id in vistos:
+                continue
+            vistos.add(producto_id)
+            prod = db.scalar(select(Producto).where(Producto.id == producto_id))
+            if not prod:
+                continue
+            actual = prod.stock_actual or 0
+            minimo = prod.stock_minimo or 0
+            if actual <= minimo:
+                alertas.append(
+                    {
+                        "producto_id": prod.id,
+                        "nombre": prod.nombre,
+                        "stock_actual": actual,
+                        "stock_minimo": minimo,
+                        "agotado": actual == 0,
+                    }
+                )
+        return alertas
 
     @staticmethod
     def get_by_id(db: Session, order_id: int) -> Optional[Pedido]:
@@ -193,14 +306,15 @@ class OrderService:
                 )
 
         codigo = order_in.codigo_pedido or f"PED-{uuid.uuid4().hex[:8].upper()}"
-        fecha_ped = order_in.fecha_pedido or datetime.now(timezone.utc)
+        fecha_ped = order_in.fecha_pedido or ahora_lima()
         fecha_ent = order_in.fecha_entrega
         if order_in.estado == "Entregado" and not fecha_ent:
-            fecha_ent = datetime.now(timezone.utc)
+            fecha_ent = ahora_lima()
 
         db_order = Pedido(
             cliente_id=order_in.cliente_id,
             usuario_id=user_id,
+            solicitud_id=order_in.solicitud_id,
             codigo_pedido=codigo,
             fecha_pedido=fecha_ped,
             fecha_entrega=fecha_ent,
@@ -212,7 +326,10 @@ class OrderService:
         db.add(db_order)
         db.flush()
 
+        descuento_pct = OrderService._descuento_pactado(db, order_in.cliente_id)
+
         total_pedido = Decimal("0.00")
+        algun_item_con_error = False
         for item in order_in.items:
             prod = db.scalar(select(Producto).where(Producto.id == item.producto_id))
             if not prod:
@@ -225,12 +342,13 @@ class OrderService:
             total_pedido += subtotal
 
             item_tiene_error = item.tiene_error
-            item_tipo_error = item.tipo_error or "Ninguno"
+            item_tipo_error = normalizar_tipo_error(item.tipo_error)
             item_desc_error = item.descripcion_error
 
             esperado_id = cantidades_solicitadas.get(item.producto_id)
             esperado_nombre = cantidades_solicitadas_por_nombre.get(prod.nombre.strip().lower())
             esperado = esperado_id if esperado_id is not None else esperado_nombre
+            desfase_precio = OrderService._evaluar_precio(item.precio_unitario, prod, descuento_pct)
 
             if (prod.stock_actual or 0) < item.cantidad:
                 item_tiene_error = True
@@ -244,22 +362,23 @@ class OrderService:
                 item_tiene_error = True
                 item_tipo_error = "Cantidad_Erronea"
                 item_desc_error = f"Cantidad difiere de la solicitud (Solicitado: {esperado}, Registrado: {item.cantidad})."
+            elif desfase_precio:
+                item_tiene_error = True
+                item_tipo_error = "Precio_Desactualizado"
+                item_desc_error = desfase_precio
             elif (
-                auditoria_ia and auditoria_ia.hay_discrepancia and not item_tiene_error
+                auditoria_ia
+                and auditoria_ia.hay_discrepancia
+                and not item_tiene_error
+                and auditoria_ia.tipo_error in TIPOS_ERROR_DETALLE_VALIDOS
+                and auditoria_ia.tipo_error != "Ninguno"
             ):
                 item_tiene_error = True
-                item_tipo_error = (
-                    auditoria_ia.tipo_error
-                    if auditoria_ia.tipo_error
-                    in [
-                        "SKU_Incorrecto",
-                        "Precio_Desactualizado",
-                        "Stock_Insuficiente",
-                        "Cantidad_Erronea",
-                    ]
-                    else "Cantidad_Erronea"
-                )
+                item_tipo_error = auditoria_ia.tipo_error
                 item_desc_error = auditoria_ia.descripcion_discrepancia
+
+            if item_tiene_error:
+                algun_item_con_error = True
 
             detalle = DetallePedido(
                 pedido_id=db_order.id,
@@ -286,16 +405,38 @@ class OrderService:
         if solicitud:
             solicitud.estado = "Atendida"
 
+        if (
+            (algun_item_con_error or auditoria_cond.tiene_falla)
+            and (db_order.estado or "Pendiente") in ESTADOS_CONFIRMADOS
+        ):
+            db_order.estado = "Pendiente"
+            db_order.fecha_entrega = None
+
         db_order.monto_total = total_pedido
+
+        items_pedido = [(it.producto_id, it.cantidad) for it in order_in.items]
+        if db_order.estado in ESTADOS_CONFIRMADOS:
+            OrderService._mover_stock(
+                db, items_pedido, -1, db_order.id, f"Confirmación de pedido {db_order.codigo_pedido}"
+            )
+            db_order.stock_descontado = True
+
         db.commit()
 
+        alertas = (
+            OrderService._alertas_stock_de_items(db, items_pedido)
+            if db_order.stock_descontado
+            else []
+        )
+
         pedido_creado = OrderService.get_by_id(db, db_order.id)
-        if pedido_creado.estado in ESTADOS_CONFIRMADOS:
-            DecisionService.registrar_confirmacion_pedido(db, pedido_creado, user_id)
-            IndicatorService.calculate_and_save(
-                db, resumen="Recálculo automático tras confirmación de pedido"
-            )
-            pedido_creado = OrderService.get_by_id(db, db_order.id)
+        DecisionService.sincronizar_pedido(db, pedido_creado)
+        db.commit()
+        IndicatorService.calculate_and_save(
+            db, resumen="Recálculo automático tras registro de pedido"
+        )
+        pedido_creado = OrderService.get_by_id(db, db_order.id)
+        pedido_creado.alertas_stock = alertas
         return pedido_creado
 
     @staticmethod
@@ -310,7 +451,11 @@ class OrderService:
             )
 
         estado_anterior = db_order.estado
+        stock_descontado_antes = db_order.stock_descontado
+        items_antes = OrderService._items_tuplas(db_order.detalles)
         datos = order_in.model_dump(exclude_unset=True)
+
+        items_reemplazados = "items" in datos and datos["items"] is not None
 
         target_cliente_id = datos.get("cliente_id", db_order.cliente_id)
         solicitud_id = datos.get("solicitud_id")
@@ -340,7 +485,7 @@ class OrderService:
             nuevo_estado = datos["estado"]
             if nuevo_estado == "Entregado":
                 if not datos.get("fecha_entrega") and not db_order.fecha_entrega:
-                    datos["fecha_entrega"] = datetime.now(timezone.utc)
+                    datos["fecha_entrega"] = ahora_lima()
             else:
                 datos["fecha_entrega"] = None
 
@@ -349,6 +494,7 @@ class OrderService:
                 db.delete(detalle)
             db.flush()
 
+            descuento_pct = OrderService._descuento_pactado(db, target_cliente_id)
             total_pedido = Decimal("0.00")
             for item in order_in.items:
                 prod = db.scalar(
@@ -372,6 +518,7 @@ class OrderService:
                 esperado = esperado_id if esperado_id is not None else esperado_nombre
 
                 tiene_referencia_solicitud = bool(cantidades_solicitadas or cantidades_solicitadas_por_nombre)
+                desfase_precio = OrderService._evaluar_precio(item.precio_unitario, prod, descuento_pct)
 
                 if (prod.stock_actual or 0) < item.cantidad:
                     item_tiene_error = True
@@ -385,6 +532,10 @@ class OrderService:
                     item_tiene_error = True
                     item_tipo_error = "Cantidad_Erronea"
                     item_desc_error = f"Cantidad difiere de la solicitud (Solicitado: {esperado}, Registrado: {item.cantidad})."
+                elif desfase_precio:
+                    item_tiene_error = True
+                    item_tipo_error = "Precio_Desactualizado"
+                    item_desc_error = desfase_precio
 
                 nuevo_detalle = DetallePedido(
                     pedido_id=db_order.id,
@@ -393,19 +544,13 @@ class OrderService:
                     precio_unitario=item.precio_unitario,
                     subtotal=subtotal,
                     tiene_error=item_tiene_error,
-                    tipo_error=item_tipo_error,
+                    tipo_error=normalizar_tipo_error(item_tipo_error),
                     descripcion_error=item_desc_error,
                 )
                 db.add(nuevo_detalle)
 
             db_order.monto_total = total_pedido
             del datos["items"]
-
-            fecha_original = db_order.fecha_pedido.date() if db_order.fecha_pedido else None
-            fecha_enviada = datos.get("fecha_pedido")
-            fecha_enviada_date = fecha_enviada.date() if fecha_enviada else None
-            if fecha_enviada_date is None or fecha_enviada_date == fecha_original:
-                datos["fecha_pedido"] = datetime.now()
 
         target_forma_pago = datos.get("forma_pago", db_order.forma_pago)
         target_cond_id = datos.get("condicion_comercial_id")
@@ -430,7 +575,7 @@ class OrderService:
             db_order.auditoria_condicion.condicion_comercial_id = evaluacion.condicion_comercial_id
             db_order.auditoria_condicion.tiene_falla = evaluacion.tiene_falla
             db_order.auditoria_condicion.motivo_falla = evaluacion.motivo_falla
-            db_order.auditoria_condicion.fecha_evaluacion = datetime.now(timezone.utc)
+            db_order.auditoria_condicion.fecha_evaluacion = ahora_lima()
         else:
             db.add(evaluacion)
 
@@ -447,20 +592,53 @@ class OrderService:
             db_order.estado = "Pendiente"
             db_order.fecha_entrega = None
 
+        if (
+            db_order.estado in ESTADOS_CONFIRMADOS
+            and estado_anterior not in ESTADOS_CONFIRMADOS
+            and db_order.cliente
+            and db_order.cliente.estado != "Activo"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se puede aprobar el pedido: el cliente está inactivo.",
+            )
+
+        items_despues = (
+            [(it.producto_id, it.cantidad) for it in order_in.items]
+            if items_reemplazados
+            else items_antes
+        )
+        debe_descontar = db_order.estado in ESTADOS_CONFIRMADOS
+
+        if stock_descontado_antes:
+            OrderService._mover_stock(
+                db, items_antes, 1, db_order.id, f"Reversión de pedido {db_order.codigo_pedido}"
+            )
+        if debe_descontar:
+            OrderService._mover_stock(
+                db, items_despues, -1, db_order.id, f"Confirmación de pedido {db_order.codigo_pedido}"
+            )
+        db_order.stock_descontado = debe_descontar
+
+        if db_order.estado == "Cancelado":
+            OrderService._revertir_solicitud(db, db_order.solicitud_id)
+
         db.commit()
 
+        alertas = (
+            OrderService._alertas_stock_de_items(db, items_despues)
+            if debe_descontar
+            else []
+        )
+
         pedido_actualizado = OrderService.get_by_id(db, order_id)
-        nuevo_estado = db_order.estado
-        if (
-            usuario_id
-            and nuevo_estado in ESTADOS_CONFIRMADOS
-            and estado_anterior not in ESTADOS_CONFIRMADOS
-        ):
-            DecisionService.registrar_confirmacion_pedido(db, pedido_actualizado, usuario_id)
-            IndicatorService.calculate_and_save(
-                db, resumen="Recálculo automático tras confirmación de pedido"
-            )
-            pedido_actualizado = OrderService.get_by_id(db, order_id)
+        DecisionService.sincronizar_pedido(db, pedido_actualizado)
+        db.commit()
+        IndicatorService.calculate_and_save(
+            db, resumen="Recálculo automático tras actualización de pedido"
+        )
+        pedido_actualizado = OrderService.get_by_id(db, order_id)
+        pedido_actualizado.alertas_stock = alertas
         return pedido_actualizado
 
     @staticmethod
@@ -471,6 +649,15 @@ class OrderService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Pedido no encontrado",
             )
+        if db_order.stock_descontado:
+            OrderService._mover_stock(
+                db,
+                OrderService._items_tuplas(db_order.detalles),
+                1,
+                None,
+                f"Eliminación de pedido {db_order.codigo_pedido}",
+            )
+        OrderService._revertir_solicitud(db, db_order.solicitud_id)
         db.delete(db_order)
         db.commit()
         IndicatorService.calculate_and_save(
@@ -489,18 +676,34 @@ class OrderService:
                 detail="Pedido no encontrado",
             )
 
-        error_asignado = tipo_error.strip() if tipo_error else "Error_No_Especificado"
+        error_asignado = normalizar_tipo_error(tipo_error)
 
         for detalle in db_order.detalles:
             detalle.tiene_error = True
             detalle.tipo_error = error_asignado
             detalle.descripcion_error = descripcion
 
+        if db_order.stock_descontado:
+            OrderService._mover_stock(
+                db,
+                OrderService._items_tuplas(db_order.detalles),
+                1,
+                db_order.id,
+                f"Marcado con error el pedido {db_order.codigo_pedido}",
+            )
+            db_order.stock_descontado = False
+
         db_order.estado = "Pendiente"
         db_order.fecha_entrega = None
         db_order.observaciones = f"[ERROR: {error_asignado}] {descripcion}".strip()
 
         db.commit()
+        pedido = OrderService.get_by_id(db, order_id)
+        DecisionService.sincronizar_pedido(db, pedido)
+        db.commit()
+        IndicatorService.calculate_and_save(
+            db, resumen="Recálculo automático tras marcar error en pedido"
+        )
         return OrderService.get_by_id(db, order_id)
 
     @staticmethod
@@ -519,4 +722,10 @@ class OrderService:
 
         db_order.observaciones = ""
         db.commit()
+        pedido = OrderService.get_by_id(db, order_id)
+        DecisionService.sincronizar_pedido(db, pedido)
+        db.commit()
+        IndicatorService.calculate_and_save(
+            db, resumen="Recálculo automático tras limpiar error de pedido"
+        )
         return OrderService.get_by_id(db, order_id)

@@ -1,9 +1,11 @@
 from typing import List, Optional
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.customer import Cliente
+from app.models.customer_request import SolicitudCliente
+from app.models.order import Pedido
 from app.schemas.customer import CustomerCreate, CustomerUpdate
 
 
@@ -74,13 +76,42 @@ class CustomerService:
         return customer
 
     @staticmethod
-    def delete(db: Session, customer_id: int) -> bool:
+    def _tiene_historial(db: Session, customer_id: int) -> bool:
+        pedidos = db.scalar(
+            select(func.count(Pedido.id)).where(Pedido.cliente_id == customer_id)
+        ) or 0
+        solicitudes = db.scalar(
+            select(func.count(SolicitudCliente.id)).where(
+                SolicitudCliente.cliente_id == customer_id
+            )
+        ) or 0
+        return (pedidos + solicitudes) > 0
+
+    @staticmethod
+    def delete(db: Session, customer_id: int) -> dict:
         customer = CustomerService.get_by_id(db, customer_id)
         if not customer:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Cliente no encontrado",
             )
+
+        if CustomerService._tiene_historial(db, customer_id):
+            if customer.estado == "Inactivo":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="El cliente ya está inactivo.",
+                )
+            customer.estado = "Inactivo"
+            db.commit()
+            return {
+                "message": (
+                    "El cliente tiene pedidos o solicitudes registradas, por lo que se "
+                    "marcó como inactivo en lugar de eliminarlo."
+                ),
+                "soft_delete": True,
+            }
+
         db.delete(customer)
         db.commit()
-        return True
+        return {"message": "Cliente eliminado exitosamente", "soft_delete": False}

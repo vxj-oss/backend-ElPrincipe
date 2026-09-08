@@ -1,11 +1,11 @@
 ﻿from typing import Any, Dict, List
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_admin, get_current_active_user
 from app.core.database import get_db
 from app.models.user import Usuario
-from app.schemas.user import UserCreate, UserResponse, UserUpdate
+from app.schemas.user import PasswordChangeRequest, UserResponse, UserUpdate
 from app.services.history_service import HistoryService
 from app.services.user_service import UserService
 
@@ -29,11 +29,12 @@ def update_my_profile(
     current_user: Usuario = Depends(get_current_active_user),
 ):
 
+    user_in.password = None
     if current_user.rol != "administrador":
         user_in.rol = None
         user_in.esta_activo = None
 
-    updated_user = UserService.update(db, current_user.id, user_in)
+    updated_user = UserService.update(db, current_user.id, user_in, actor_id=current_user.id)
 
     HistoryService.log(
         db=db,
@@ -47,6 +48,34 @@ def update_my_profile(
         ip=request.client.host if request.client else None,
     )
     return updated_user
+
+
+@router.put(
+    "/me/password",
+    response_model=Dict[str, Any],
+    summary="Cambiar la propia contraseña (verifica la actual)",
+)
+def change_my_password(
+    payload: PasswordChangeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_active_user),
+):
+    UserService.cambiar_password_propia(
+        db, current_user, payload.actual, payload.nueva
+    )
+    HistoryService.log(
+        db=db,
+        accion="ACTUALIZAR",
+        modulo="Auth",
+        usuario_id=current_user.id,
+        detalle={
+            "entidad": current_user.correo,
+            "descripcion": f"{current_user.nombre_completo} cambió su contraseña",
+        },
+        ip=request.client.host if request.client else None,
+    )
+    return {"message": "Contraseña actualizada correctamente"}
 
 
 @router.get(
@@ -93,33 +122,6 @@ def list_users(
     return UserService.get_all(db, skip=skip, limit=limit)
 
 
-@router.post(
-    "/",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Crear usuario",
-)
-def create_user(
-    user_in: UserCreate,
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: Usuario = Depends(get_current_active_admin),
-):
-    new_user = UserService.create(db, user_in)
-    HistoryService.log(
-        db=db,
-        accion="CREAR",
-        modulo="Auth",
-        usuario_id=current_user.id,
-        detalle={
-            "entidad": new_user.correo,
-            "descripcion": f"Creó al usuario {new_user.nombre_completo} ({new_user.rol})",
-        },
-        ip=request.client.host if request.client else None,
-    )
-    return new_user
-
-
 @router.get("/{user_id}", response_model=UserResponse, summary="Obtener usuario por ID")
 def get_user(
     user_id: int,
@@ -137,7 +139,8 @@ def update_user(
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_active_admin),
 ):
-    updated = UserService.update(db, user_id, user_in)
+    user_in.password = None
+    updated = UserService.update(db, user_id, user_in, actor_id=current_user.id)
     HistoryService.log(
         db=db,
         accion="ACTUALIZAR",
@@ -161,7 +164,8 @@ def delete_user(
 ):
     user = UserService.get_by_id(db, user_id)
     email = user.correo if user else f"ID {user_id}"
-    UserService.delete(db, user_id)
+    resultado = UserService.delete(db, user_id, actor_id=current_user.id)
+    accion_txt = "Desactivó" if resultado.get("soft_delete") else "Eliminó"
     HistoryService.log(
         db=db,
         accion="ELIMINAR",
@@ -169,8 +173,8 @@ def delete_user(
         usuario_id=current_user.id,
         detalle={
             "entidad": email,
-            "descripcion": f"Eliminó al usuario {email}",
+            "descripcion": f"{accion_txt} al usuario {email}",
         },
         ip=request.client.host if request.client else None,
     )
-    return {"message": "Usuario eliminado correctamente"}
+    return resultado

@@ -79,10 +79,28 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
         """Captura errores de clave duplicada, llaves foráneas inexistentes o restricciones únicas en BD."""
         logger.error(f"IntegrityError en {request.url.path}: {exc.orig}")
-        
-        # Mensaje limpio para evitar exponer datos sensibles del motor SQL
-        mensaje_usuario = "Conflicto de integridad en base de datos (registro duplicado o relación inexistente)."
-        
+
+        detalle_sql = str(getattr(exc, "orig", "")).lower()
+        es_borrado = request.method == "DELETE"
+        referencia = (
+            "fkey" in detalle_sql
+            or "foreign key" in detalle_sql
+            or "foránea" in detalle_sql
+            or "foranea" in detalle_sql
+            or "referencia" in detalle_sql
+        )
+        if referencia or (es_borrado and ("not null" in detalle_sql or "no nulo" in detalle_sql)):
+            mensaje_usuario = (
+                "El registro está siendo utilizado por otros datos del sistema "
+                "y no puede eliminarse. Intenta desactivarlo en su lugar."
+            )
+        elif "unique" in detalle_sql or "duplicate key" in detalle_sql or "llave duplicada" in detalle_sql:
+            mensaje_usuario = "Ya existe un registro con esos mismos datos."
+        elif "not null" in detalle_sql or "no nulo" in detalle_sql:
+            mensaje_usuario = "Faltan datos obligatorios para completar la operación."
+        else:
+            mensaje_usuario = "Conflicto de integridad en la base de datos."
+
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
             content={

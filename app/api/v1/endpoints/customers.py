@@ -74,7 +74,7 @@ def update_customer(
     return customer
 
 
-@router.delete("/{customer_id}", summary="Eliminar cliente")
+@router.delete("/{customer_id}", summary="Eliminar o desactivar cliente")
 def delete_customer(
     customer_id: int,
     request: Request,
@@ -83,10 +83,12 @@ def delete_customer(
 ):
     customer = CustomerService.get_by_id(db, customer_id)
     entidad = customer.ruc_dni if customer else f"ID {customer_id}"
-    CustomerService.delete(db, customer_id)
+    razon = customer.razon_social if customer else entidad
+    resultado = CustomerService.delete(db, customer_id)
+    accion_txt = "Desactivó" if resultado.get("soft_delete") else "Eliminó"
     HistoryService.log(
         db, "ELIMINAR", "Clientes", current_user.id,
-        {"entidad": entidad, "descripcion": f"Eliminó al cliente {customer.razon_social if customer else entidad}"},
+        {"entidad": entidad, "descripcion": f"{accion_txt} al cliente {razon}"},
         request.client.host if request.client else None
     )
-    return {"message": "Cliente eliminado exitosamente"}
+    return resultado
