@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.agent.orchestrator import AgentOrchestrator
 from app.models.agent_message import MensajeAgente
 from app.models.agent_session import SesionAgente
+from app.models.user import Usuario
 
 logger = logging.getLogger("elprincipe.services.agent")
 
@@ -41,7 +42,7 @@ class AgentService:
     @staticmethod
     def execute_query(
         db: Session,
-        user_id: int,
+        current_user: Usuario,
         prompt: str,
         session_id: Optional[int] = None,
         contexto: Optional[Dict[str, Any]] = None,
@@ -49,7 +50,7 @@ class AgentService:
         """Ejecuta el pipeline completo del agente inteligente y persiste el historial."""
         start_time = time.time()
         sesion = AgentService.get_or_create_session(
-            db=db, user_id=user_id, session_id=session_id, prompt_preview=prompt
+            db=db, user_id=current_user.id, session_id=session_id, prompt_preview=prompt
         )
         msg_user = MensajeAgente(
             sesion_id=sesion.id,
@@ -62,7 +63,7 @@ class AgentService:
         try:
             agent_result = AgentOrchestrator.handle_query(
                 db=db,
-                user_id=user_id,
+                current_user=current_user,
                 prompt=prompt,
                 session_id=sesion.id,
                 contexto=contexto,

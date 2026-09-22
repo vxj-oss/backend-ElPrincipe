@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -132,3 +132,24 @@ class CommercialTermService:
             db, resumen="Recálculo automático tras actualización de condición comercial"
         )
         return CommercialTermService.get_by_id(db, term_id)
+
+    @staticmethod
+    def delete(db: Session, term_id: int) -> Dict[str, Any]:
+        term = CommercialTermService.get_by_id(db, term_id)
+        if not term:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Condición comercial no encontrada",
+            )
+        cliente_id = term.cliente_id
+        cliente_nombre = term.cliente.razon_social if term.cliente else str(cliente_id)
+        tipo_condicion = term.tipo_condicion
+
+        db.delete(term)
+        db.commit()
+        CommercialTermService._reauditar_pedidos_cliente(db, cliente_id)
+        db.commit()
+        IndicatorService.calculate_and_save(
+            db, resumen="Recálculo automático tras eliminación de condición comercial"
+        )
+        return {"cliente_nombre": cliente_nombre, "tipo_condicion": tipo_condicion}

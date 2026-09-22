@@ -20,10 +20,7 @@ class Producto(Base):
     sku: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     nombre: Mapped[str] = mapped_column(String(200), nullable=False)
     descripcion: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    unidad_medida: Mapped[str] = mapped_column(
-        Enum("Galón", "Bidón 5L", "Saco 15Kg", "Unidad", name="unidad_medida_producto"),
-        nullable=False,
-    )
+    unidad_medida: Mapped[str] = mapped_column(String(100), nullable=False)
     precio_unitario: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     precio_costo: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     stock_actual: Mapped[int] = mapped_column(nullable=False, default=0)

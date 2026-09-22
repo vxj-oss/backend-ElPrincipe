@@ -1,6 +1,7 @@
 import json
 import uuid
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -61,6 +62,22 @@ class SolicitudClienteService:
             .limit(limit)
         )
         return list(db.scalars(stmt).all())
+
+    @staticmethod
+    def delete(db: Session, request_id: int) -> Dict[str, Any]:
+        solicitud = SolicitudClienteService.get_by_id(db, request_id)
+        if not solicitud:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Solicitud de cliente no encontrada.",
+            )
+        codigo = solicitud.codigo_solicitud
+        cliente_nombre = (
+            solicitud.cliente.razon_social if solicitud.cliente else str(solicitud.cliente_id)
+        )
+        db.delete(solicitud)
+        db.commit()
+        return {"codigo_solicitud": codigo, "cliente_nombre": cliente_nombre}
 
     @staticmethod
     def get_by_id(db: Session, request_id: int) -> Optional[SolicitudCliente]:

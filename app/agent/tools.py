@@ -2,16 +2,21 @@ import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
-from sqlalchemy import case, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.category import Categoria
 from app.models.commercial_term import CondicionComercial
 from app.models.customer import Cliente
+from app.models.customer_request import SolicitudCliente
+from app.models.customer_request_item import SolicitudClienteDetalle
 from app.models.order import Pedido
 from app.models.order_item import DetallePedido
 from app.models.product import Producto
+from app.models.stock_movement import MovimientoStock
+from app.models.user import Usuario
 from app.services.decision_service import DecisionService
+from app.services.history_service import HistoryService
 from app.services.indicator_service import IndicatorService
 
 
@@ -314,6 +319,63 @@ class CommercialTools:
         }
 
     @staticmethod
+    def get_order_by_code(db: Session, codigo: str) -> Dict[str, Any]:
+        codigo = (codigo or "").strip()
+        if not codigo:
+            return {"encontrado": False, "mensaje": "No se indicó ningún código de pedido a buscar."}
+
+        stmt = (
+            select(Pedido)
+            .options(
+                selectinload(Pedido.cliente),
+                selectinload(Pedido.detalles).selectinload(DetallePedido.producto),
+                selectinload(Pedido.auditoria_condicion),
+            )
+            .where(Pedido.codigo_pedido.ilike(f"%{codigo}%"))
+            .order_by(Pedido.id.desc())
+        )
+        pedido = db.scalars(stmt).first()
+        if not pedido:
+            return {
+                "encontrado": False,
+                "mensaje": f"No existe ningún pedido cuyo código coincida con '{codigo}'.",
+            }
+
+        items_con_error = [
+            f"{d.cantidad}x {d.producto.nombre if d.producto else 'Item'} — {d.tipo_error}"
+            + (f" ({d.descripcion_error})" if d.descripcion_error else "")
+            for d in pedido.detalles
+            if d.tiene_error
+        ]
+
+        falla = pedido.auditoria_condicion
+        falla_condicion = f"Sí — {falla.motivo_falla}" if falla and falla.tiene_falla else "No"
+
+        decision = DecisionService._buscar_decision(db, pedido.id)
+        decision_info = (
+            {
+                "es_efectiva": decision.es_efectiva,
+                "requirio_correccion": decision.requirio_correccion,
+                "observaciones": decision.observaciones_impacto,
+            }
+            if decision
+            else "Sin decisión registrada (pedido cancelado o pendiente de sincronizar)."
+        )
+
+        return {
+            "encontrado": True,
+            "codigo_pedido": pedido.codigo_pedido,
+            "cliente": pedido.cliente.razon_social if pedido.cliente else "Cliente General",
+            "estado": str(pedido.estado),
+            "fecha": pedido.fecha_pedido.strftime("%d/%m/%Y") if pedido.fecha_pedido else "—",
+            "monto_total": float(pedido.monto_total or 0),
+            "tiene_error_en_items": bool(items_con_error),
+            "detalle_errores_items": items_con_error if items_con_error else "Ninguno",
+            "falla_condicion_comercial": falla_condicion,
+            "decision_comercial": decision_info,
+        }
+
+    @staticmethod
     def get_top_rotation_products(db: Session, limit: int = 5) -> List[Dict[str, Any]]:
         orden_rotacion = case(
             (Producto.nivel_rotacion == "Alta", 0),
@@ -339,16 +401,321 @@ class CommercialTools:
             for p, cat in prods
         ]
 
+    @classmethod
+    def get_customer_detail(cls, db: Session, query: str) -> Dict[str, Any]:
+        query = (query or "").strip()
+        if not query:
+            return {"encontrado": False, "mensaje": "No se indicó ningún cliente a buscar."}
+
+        term = f"%{query}%"
+        cliente = db.scalar(
+            select(Cliente).where(
+                or_(Cliente.razon_social.ilike(term), Cliente.ruc_dni.ilike(term))
+            )
+        )
+        if not cliente:
+            return {
+                "encontrado": False,
+                "mensaje": f"No existe ningún cliente registrado que coincida con '{query}'.",
+            }
+
+        condiciones = db.scalars(
+            select(CondicionComercial).where(CondicionComercial.cliente_id == cliente.id)
+        ).all()
+        total_pedidos = db.scalar(
+            select(func.count(Pedido.id)).where(Pedido.cliente_id == cliente.id)
+        ) or 0
+        total_solicitudes = db.scalar(
+            select(func.count(SolicitudCliente.id)).where(
+                SolicitudCliente.cliente_id == cliente.id
+            )
+        ) or 0
+
+        return {
+            "encontrado": True,
+            "razon_social": cliente.razon_social,
+            "ruc_dni": cliente.ruc_dni,
+            "tipo_cliente": cliente.tipo_cliente,
+            "clasificacion": cliente.clasificacion,
+            "estado": cliente.estado,
+            "direccion": cliente.direccion or "—",
+            "distrito": cliente.distrito or "—",
+            "telefono": cliente.telefono or "—",
+            "correo": cliente.correo or "—",
+            "condiciones_comerciales": [
+                {
+                    "tipo_condicion": c.tipo_condicion,
+                    "plazo_dias": c.dias_plazo_pactados,
+                    "descuento_pct": float(c.porcentaje_descuento or 0),
+                    "limite_credito": float(c.limite_credito_asignado or 0),
+                }
+                for c in condiciones
+            ] or "Sin condiciones pactadas",
+            "total_pedidos_registrados": total_pedidos,
+            "total_solicitudes_registradas": total_solicitudes,
+        }
+
+    @staticmethod
+    def get_customer_requests(
+        db: Session, estado: Optional[str] = None, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        stmt = (
+            select(SolicitudCliente)
+            .options(
+                selectinload(SolicitudCliente.cliente),
+                selectinload(SolicitudCliente.detalles),
+            )
+            .order_by(SolicitudCliente.id.desc())
+        )
+        solicitudes = db.scalars(stmt).all()
+
+        if estado:
+            solicitudes = [
+                s for s in solicitudes if str(s.estado).lower() == estado.lower()
+            ]
+
+        solicitudes = solicitudes[:limit]
+        return [
+            {
+                "codigo_solicitud": s.codigo_solicitud,
+                "cliente": s.cliente.razon_social if s.cliente else "—",
+                "fecha": s.fecha_solicitud.strftime("%d/%m/%Y") if s.fecha_solicitud else "—",
+                "estado": s.estado,
+                "canal_recepcion": s.canal_recepcion or "—",
+                "items_solicitados": [
+                    f"{d.cantidad_solicitada}x {d.nombre_producto_solicitado}"
+                    + (f" (S/ {float(d.precio_esperado):,.2f} esperado)" if d.precio_esperado else "")
+                    for d in s.detalles
+                ],
+                "observaciones": s.observaciones or "Sin observaciones",
+            }
+            for s in solicitudes
+        ]
+
+    @staticmethod
+    def get_customer_request_by_code(db: Session, codigo: str) -> Dict[str, Any]:
+        codigo = (codigo or "").strip()
+        if not codigo:
+            return {"encontrado": False, "mensaje": "No se indicó ningún código de solicitud a buscar."}
+
+        stmt = (
+            select(SolicitudCliente)
+            .options(
+                selectinload(SolicitudCliente.cliente),
+                selectinload(SolicitudCliente.detalles),
+                selectinload(SolicitudCliente.usuario),
+            )
+            .where(SolicitudCliente.codigo_solicitud.ilike(f"%{codigo}%"))
+            .order_by(SolicitudCliente.id.desc())
+        )
+        solicitud = db.scalars(stmt).first()
+        if not solicitud:
+            return {
+                "encontrado": False,
+                "mensaje": f"No existe ninguna solicitud cuyo código coincida con '{codigo}'.",
+            }
+
+        return {
+            "encontrado": True,
+            "codigo_solicitud": solicitud.codigo_solicitud,
+            "cliente": solicitud.cliente.razon_social if solicitud.cliente else "—",
+            "registrada_por": solicitud.usuario.nombre_completo if solicitud.usuario else "—",
+            "fecha": solicitud.fecha_solicitud.strftime("%d/%m/%Y") if solicitud.fecha_solicitud else "—",
+            "estado": solicitud.estado,
+            "canal_recepcion": solicitud.canal_recepcion or "—",
+            "items_solicitados": [
+                {
+                    "producto": d.nombre_producto_solicitado,
+                    "cantidad": d.cantidad_solicitada,
+                    "precio_esperado": float(d.precio_esperado) if d.precio_esperado else None,
+                }
+                for d in solicitud.detalles
+            ],
+            "observaciones": solicitud.observaciones or "Sin observaciones",
+        }
+
+    @classmethod
+    def get_stock_movements(
+        cls, db: Session, query: Optional[str] = None, limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        stmt = (
+            select(MovimientoStock)
+            .options(selectinload(MovimientoStock.producto), selectinload(MovimientoStock.pedido))
+            .order_by(MovimientoStock.id.desc())
+        )
+        movimientos = db.scalars(stmt).all()
+
+        if query:
+            keywords = cls.extract_keywords(query) or [query.strip().lower()]
+            movimientos = [
+                m
+                for m in movimientos
+                if m.producto
+                and any(kw in m.producto.nombre.lower() or kw in m.producto.sku.lower() for kw in keywords)
+            ]
+
+        movimientos = movimientos[:limit]
+        return [
+            {
+                "producto": m.producto.nombre if m.producto else "—",
+                "tipo": m.tipo,
+                "cantidad": m.cantidad,
+                "stock_anterior": m.stock_anterior,
+                "stock_nuevo": m.stock_nuevo,
+                "motivo": m.motivo or "—",
+                "pedido_relacionado": m.pedido.codigo_pedido if m.pedido else None,
+                "fecha": m.creado_en.strftime("%d/%m/%Y %H:%M") if m.creado_en else "—",
+            }
+            for m in movimientos
+        ]
+
+    @staticmethod
+    def get_categories(db: Session, limit: int = 20) -> List[Dict[str, Any]]:
+        stmt = (
+            select(Categoria, func.count(Producto.id).label("total_productos"))
+            .outerjoin(Producto, Producto.categoria_id == Categoria.id)
+            .group_by(Categoria.id)
+            .order_by(Categoria.nombre.asc())
+            .limit(limit)
+        )
+        rows = db.execute(stmt).all()
+        return [
+            {
+                "nombre": cat.nombre,
+                "descripcion": cat.descripcion or "—",
+                "total_productos": total,
+            }
+            for cat, total in rows
+        ]
+
+    @staticmethod
+    def get_audit_history(
+        db: Session,
+        current_user: Usuario,
+        accion: Optional[str] = None,
+        modulo: Optional[str] = None,
+        limit: int = 20,
+    ) -> Any:
+        if current_user.rol != "administrador":
+            return {
+                "mensaje": "No tienes permisos para consultar el historial de auditoría del sistema; esa función está disponible solo para administradores."
+            }
+
+        resultado = HistoryService.get_all(
+            db, modulo=modulo, accion=accion, pagina=1, por_pagina=min(limit, 50)
+        )
+        return [
+            {
+                "usuario": item["usuario_nombre"],
+                "accion": item["accion"],
+                "modulo_afectado": item["modulo_afectado"],
+                "detalle": (item["detalle_cambio"] or {}).get("descripcion", "—"),
+                "fecha": item["fecha_hora"].strftime("%d/%m/%Y %H:%M") if item["fecha_hora"] else "—",
+            }
+            for item in resultado["items"]
+        ]
+
+    @staticmethod
+    def get_my_profile(current_user: Usuario) -> Dict[str, Any]:
+        return {
+            "nombre_completo": current_user.nombre_completo,
+            "nombre_usuario": current_user.nombre_usuario,
+            "correo": current_user.correo,
+            "rol": current_user.rol,
+            "esta_activo": current_user.esta_activo,
+        }
+
+    @staticmethod
+    def find_worker_info(db: Session, current_user: Usuario, query: str) -> Dict[str, Any]:
+        query = (query or "").strip()
+        if current_user.rol != "administrador":
+            return {
+                "encontrado": False,
+                "mensaje": "No se encontró ningún usuario registrado con ese nombre.",
+            }
+        if not query:
+            return {"encontrado": False, "mensaje": "No se indicó ningún nombre o correo a buscar."}
+
+        term = f"%{query}%"
+        usuario = db.scalar(
+            select(Usuario).where(
+                or_(
+                    Usuario.nombre_completo.ilike(term),
+                    Usuario.correo.ilike(term),
+                    Usuario.nombre_usuario.ilike(term),
+                )
+            )
+        )
+        if not usuario:
+            return {
+                "encontrado": False,
+                "mensaje": f"No existe ningún trabajador registrado que coincida con '{query}'.",
+            }
+        return {
+            "encontrado": True,
+            "nombre_completo": usuario.nombre_completo,
+            "nombre_usuario": usuario.nombre_usuario,
+            "correo": usuario.correo,
+            "rol": usuario.rol,
+            "esta_activo": usuario.esta_activo,
+        }
+
+    @staticmethod
+    def list_workers(db: Session, current_user: Usuario) -> Any:
+        if current_user.rol != "administrador":
+            return {"mensaje": "No tienes permisos para listar a los demás usuarios del sistema."}
+
+        stmt = select(Usuario).order_by(Usuario.nombre_completo.asc())
+        usuarios = db.scalars(stmt).all()
+        return [
+            {
+                "nombre_completo": u.nombre_completo,
+                "nombre_usuario": u.nombre_usuario,
+                "correo": u.correo,
+                "rol": u.rol,
+                "esta_activo": u.esta_activo,
+            }
+            for u in usuarios
+        ]
+
+    @staticmethod
+    def get_my_orders(db: Session, current_user: Usuario, limit: int = 10) -> List[Dict[str, Any]]:
+        stmt = (
+            select(Pedido)
+            .options(
+                selectinload(Pedido.cliente),
+                selectinload(Pedido.detalles).selectinload(DetallePedido.producto),
+            )
+            .where(Pedido.usuario_id == current_user.id)
+            .order_by(Pedido.id.desc())
+            .limit(limit)
+        )
+        pedidos = db.scalars(stmt).all()
+        return [
+            {
+                "codigo_pedido": p.codigo_pedido,
+                "cliente": p.cliente.razon_social if p.cliente else "Cliente General",
+                "fecha": p.fecha_pedido.strftime("%d/%m/%Y") if p.fecha_pedido else "—",
+                "estado": str(p.estado),
+                "monto_total": float(p.monto_total or 0),
+                "items": [
+                    f"{d.cantidad}x {d.producto.nombre if d.producto else 'Item'}"
+                    for d in p.detalles
+                ],
+            }
+            for p in pedidos
+        ]
+
     TOOL_SCHEMAS: List[Dict[str, Any]] = [
         {
             "type": "function",
             "function": {
                 "name": "listar_condiciones_comerciales",
-                "description": "Lista las condiciones comerciales (descuentos, plazos, límites de crédito) pactadas por cliente.",
+                "description": "Condiciones comerciales (descuento, plazo, límite de crédito) pactadas por cliente.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "limit": {"type": "integer", "description": "Máximo de condiciones a devolver."},
+                        "limit": {"type": ["integer", "null"], "description": "Máximo a devolver."},
                     },
                     "required": [],
                 },
@@ -358,11 +725,11 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "listar_clientes",
-                "description": "Lista la cartera de clientes registrados, su tipo (Mayorista/Institucional/Minorista), su clasificación (Regular/VIP) y sus condiciones comerciales pactadas.",
+                "description": "Cartera de clientes: tipo (Mayorista/Institucional/Minorista), clasificación (Regular/VIP) y condición comercial.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "limit": {"type": "integer", "description": "Máximo de clientes a devolver."},
+                        "limit": {"type": ["integer", "null"], "description": "Máximo a devolver."},
                     },
                     "required": [],
                 },
@@ -372,16 +739,16 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "listar_pedidos",
-                "description": "Lista pedidos registrados: cliente, items, monto total, estado, condiciones y si tuvieron fallas comerciales. Útil para calcular ventas, avances de meta, o revisar pedidos por estado.",
+                "description": "Pedidos: cliente, ítems, monto, estado, condiciones y fallas comerciales. Útil para ventas, metas o filtrar por estado.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "estado": {
-                            "type": "string",
-                            "enum": ["Pendiente", "Aprobado", "Entregado", "Cancelado"],
-                            "description": "Filtra por estado del pedido.",
+                            "type": ["string", "null"],
+                            "enum": ["Pendiente", "Aprobado", "Entregado", "Cancelado", None],
+                            "description": "Filtra por estado.",
                         },
-                        "limit": {"type": "integer", "description": "Máximo de pedidos a devolver."},
+                        "limit": {"type": ["integer", "null"], "description": "Máximo a devolver."},
                     },
                     "required": [],
                 },
@@ -391,11 +758,11 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "buscar_producto_stock_precio",
-                "description": "Busca productos por nombre/SKU y devuelve su stock actual, stock mínimo y precio.",
+                "description": "Busca un producto por nombre/SKU: stock actual, mínimo y precio.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Nombre o parte del nombre/SKU del producto a buscar."},
+                        "query": {"type": "string", "description": "Nombre o SKU a buscar."},
                     },
                     "required": ["query"],
                 },
@@ -405,7 +772,7 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "listar_productos_stock_critico",
-                "description": "Lista los productos cuyo stock actual está en o por debajo del stock mínimo (necesitan reposición).",
+                "description": "Productos con stock en o bajo el mínimo (necesitan reposición).",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -413,11 +780,11 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "historial_productos_comprados",
-                "description": "Lista el historial de productos vendidos en pedidos (qué se compró, cuánto y en qué pedido).",
+                "description": "Historial de productos vendidos: qué, cuánto y en qué pedido.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "limit": {"type": "integer", "description": "Máximo de registros a devolver."},
+                        "limit": {"type": ["integer", "null"], "description": "Máximo a devolver."},
                     },
                     "required": [],
                 },
@@ -427,7 +794,7 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "clientes_que_compraron_hoy",
-                "description": "Indica qué clientes compraron hoy y el total de pedidos registrados en el día.",
+                "description": "Clientes que compraron hoy y total de pedidos del día.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -435,19 +802,178 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "obtener_indicadores_comerciales",
-                "description": "Obtiene los indicadores comerciales NEPP (errores en pedidos), PFCC (fallas en condiciones comerciales) y NTDC (nivel de toma de decisiones), con sus metas y decisiones no efectivas recientes.",
+                "description": "Indicadores NEPP, PFCC y NTDC con sus metas y decisiones no efectivas recientes.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
         {
             "type": "function",
             "function": {
-                "name": "productos_mayor_rotacion",
-                "description": "Lista los productos ordenados por su nivel de rotación registrado en el sistema (Alta, Media, Baja); a igual nivel, desempata por mayor stock disponible.",
+                "name": "buscar_pedido_por_codigo",
+                "description": "Busca un pedido por código (parcial válido, ej: DEFE0F67): estado, errores de ítems, falla de condición y decisión asociada.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "limit": {"type": "integer", "description": "Máximo de productos a devolver."},
+                        "codigo": {
+                            "type": "string",
+                            "description": "Código completo o parcial (ej: PED-DEFE0F67).",
+                        },
+                    },
+                    "required": ["codigo"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "productos_mayor_rotacion",
+                "description": "Productos ordenados por rotación (Alta/Media/Baja); a igual nivel, desempata por stock.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": ["integer", "null"], "description": "Máximo a devolver."},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "buscar_cliente_detalle",
+                "description": "Ficha completa de un cliente por razón social o RUC/DNI: contacto, condiciones pactadas y totales de pedidos/solicitudes.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Razón social o RUC/DNI."},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "listar_solicitudes_clientes",
+                "description": "Solicitudes/cotizaciones de clientes (WhatsApp u otro canal) previas a un pedido formal: producto, cantidad, precio esperado, canal y estado.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "estado": {"type": ["string", "null"], "description": "Filtra por estado (ej: Pendiente, Atendida)."},
+                        "limit": {"type": ["integer", "null"], "description": "Máximo a devolver."},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "buscar_solicitud_por_codigo",
+                "description": "Busca una solicitud de cliente por código (parcial válido, ej: SOL-ABC12345) y devuelve su detalle.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "codigo": {"type": "string", "description": "Código completo o parcial."},
+                    },
+                    "required": ["codigo"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "listar_movimientos_stock",
+                "description": "Movimientos de inventario (entrada/salida/ajuste) con stock antes/después. Útil para explicar cambios de stock.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": ["string", "null"], "description": "Nombre o SKU del producto (opcional)."},
+                        "limit": {"type": ["integer", "null"], "description": "Máximo a devolver."},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "listar_categorias",
+                "description": "Lista las categorías de productos registradas, con su descripción y cuántos productos tiene cada una.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": ["integer", "null"], "description": "Máximo a devolver."},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "consultar_historial_auditoria",
+                "description": "Consulta el historial de auditoría del sistema (quién hizo qué acción, en qué módulo y cuándo). Solo disponible para el administrador.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "accion": {
+                            "type": ["string", "null"],
+                            "enum": [
+                                "CREAR", "ACTUALIZAR", "ELIMINAR", "CONSULTA_IA",
+                                "INICIAR_SESION", "CERRAR_SESION", "EXPORTAR", "ERROR", None,
+                            ],
+                            "description": "Filtra por tipo de acción.",
+                        },
+                        "modulo": {"type": ["string", "null"], "description": "Filtra por módulo afectado (ej: Pedidos, Clientes, Productos, Auth)."},
+                        "limit": {"type": ["integer", "null"], "description": "Máximo a devolver."},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "obtener_mi_perfil",
+                "description": "Nombre, usuario, correo y rol de quien está chateando ahora. Para 'quién soy', 'mi correo', 'mi rol'.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "buscar_informacion_trabajador",
+                "description": "Busca nombre/correo/rol de OTRO usuario. Solo el administrador puede ver datos de otras personas; para los demás roles no revela nada.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "nombre_o_correo": {
+                            "type": "string",
+                            "description": "Nombre, correo o usuario a buscar.",
+                        },
+                    },
+                    "required": ["nombre_o_correo"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "listar_trabajadores",
+                "description": "Lista de todos los usuarios del sistema con su rol y estado. Solo administrador.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "mis_pedidos_registrados",
+                "description": "Pedidos registrados por el propio usuario autenticado (sus ventas).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": ["integer", "null"], "description": "Máximo a devolver."},
                     },
                     "required": [],
                 },
@@ -455,8 +981,84 @@ class CommercialTools:
         },
     ]
 
+    TOOL_CATEGORIES: Dict[str, set] = {
+        "listar_condiciones_comerciales": {"clientes"},
+        "listar_clientes": {"clientes"},
+        "buscar_cliente_detalle": {"clientes"},
+        "listar_pedidos": {"pedidos"},
+        "buscar_pedido_por_codigo": {"pedidos"},
+        "clientes_que_compraron_hoy": {"pedidos", "clientes"},
+        "historial_productos_comprados": {"pedidos", "productos"},
+        "mis_pedidos_registrados": {"pedidos", "identidad"},
+        "buscar_producto_stock_precio": {"productos"},
+        "listar_productos_stock_critico": {"productos"},
+        "productos_mayor_rotacion": {"productos"},
+        "listar_movimientos_stock": {"productos"},
+        "listar_solicitudes_clientes": {"solicitudes"},
+        "buscar_solicitud_por_codigo": {"solicitudes"},
+        "obtener_indicadores_comerciales": {"indicadores"},
+        "obtener_mi_perfil": {"identidad"},
+        "buscar_informacion_trabajador": {"identidad"},
+        "listar_trabajadores": {"identidad"},
+        "listar_categorias": {"productos"},
+        "consultar_historial_auditoria": {"auditoria"},
+    }
+
+    CATEGORY_KEYWORDS: Dict[str, List[str]] = {
+        "clientes": [
+            "cliente", "clientes", "cartera", "ruc", "dni", "razon social", "razón social",
+        ],
+        "pedidos": [
+            "pedido", "pedidos", "venta", "ventas", "vendimos", "vendido", "compraron",
+            "compró", "compro", "monto", "meta", "avance",
+        ],
+        "productos": [
+            "producto", "productos", "stock", "precio", "precios", "sku", "rotacion",
+            "rotación", "reposicion", "reposición", "inventario", "movimiento",
+            "movimientos", "categoria", "categoría",
+        ],
+        "solicitudes": [
+            "solicitud", "solicitudes", "cotizacion", "cotización", "cotizaciones",
+            "whatsapp", "canal", "sol-",
+        ],
+        "indicadores": [
+            "indicador", "indicadores", "nepp", "pfcc", "ntdc", "desempeño", "desempeno",
+            "decision", "decisión", "decisiones",
+        ],
+        "identidad": [
+            "quien soy", "quién soy", "mi correo", "mi nombre", "mi rol", "mi perfil",
+            "trabajador", "trabajadores", "empleado", "empleados", "usuario", "usuarios",
+            "perfil",
+        ],
+        "auditoria": [
+            "auditoria", "auditoría", "historial", "log", "logs", "bitacora", "bitácora",
+            "registro de actividad", "quien hizo", "quién hizo", "actividad del sistema",
+        ],
+    }
+
     @classmethod
-    def dispatch(cls, db: Session, name: str, arguments: Dict[str, Any]) -> Any:
+    def select_relevant_tools(cls, query: str) -> List[Dict[str, Any]]:
+        """Filtra las tools enviadas al modelo según palabras clave de la consulta,
+        para no mandar siempre el esquema completo y ahorrar tokens por request.
+        Si ninguna categoría matchea (consulta ambigua), se envían todas como respaldo."""
+        texto = (query or "").lower()
+        categorias_detectadas = {
+            categoria
+            for categoria, palabras in cls.CATEGORY_KEYWORDS.items()
+            if any(palabra in texto for palabra in palabras)
+        }
+        if not categorias_detectadas:
+            return cls.TOOL_SCHEMAS
+
+        seleccionadas = [
+            schema
+            for schema in cls.TOOL_SCHEMAS
+            if cls.TOOL_CATEGORIES.get(schema["function"]["name"], set()) & categorias_detectadas
+        ]
+        return seleccionadas or cls.TOOL_SCHEMAS
+
+    @classmethod
+    def dispatch(cls, db: Session, current_user: Usuario, name: str, arguments: Dict[str, Any]) -> Any:
         """Ejecuta la herramienta que el modelo decidió llamar, según su nombre y argumentos."""
         handlers: Dict[str, Any] = {
             "listar_condiciones_comerciales": lambda: cls.get_commercial_terms(
@@ -472,6 +1074,9 @@ class CommercialTools:
                 db, arguments.get("query", "")
             ),
             "listar_productos_stock_critico": lambda: cls.get_critical_stock_products(db),
+            "buscar_pedido_por_codigo": lambda: cls.get_order_by_code(
+                db, arguments.get("codigo", "")
+            ),
             "historial_productos_comprados": lambda: cls.get_purchased_products_history(
                 db, limit=arguments.get("limit", 20)
             ),
@@ -479,6 +1084,36 @@ class CommercialTools:
             "obtener_indicadores_comerciales": lambda: cls.get_indicadores_comerciales(db),
             "productos_mayor_rotacion": lambda: cls.get_top_rotation_products(
                 db, limit=arguments.get("limit", 5)
+            ),
+            "buscar_cliente_detalle": lambda: cls.get_customer_detail(
+                db, arguments.get("query", "")
+            ),
+            "listar_solicitudes_clientes": lambda: cls.get_customer_requests(
+                db, estado=arguments.get("estado"), limit=arguments.get("limit", 10)
+            ),
+            "buscar_solicitud_por_codigo": lambda: cls.get_customer_request_by_code(
+                db, arguments.get("codigo", "")
+            ),
+            "listar_movimientos_stock": lambda: cls.get_stock_movements(
+                db, query=arguments.get("query"), limit=arguments.get("limit", 20)
+            ),
+            "listar_categorias": lambda: cls.get_categories(
+                db, limit=arguments.get("limit", 20)
+            ),
+            "consultar_historial_auditoria": lambda: cls.get_audit_history(
+                db,
+                current_user,
+                accion=arguments.get("accion"),
+                modulo=arguments.get("modulo"),
+                limit=arguments.get("limit", 20),
+            ),
+            "obtener_mi_perfil": lambda: cls.get_my_profile(current_user),
+            "buscar_informacion_trabajador": lambda: cls.find_worker_info(
+                db, current_user, arguments.get("nombre_o_correo", "")
+            ),
+            "listar_trabajadores": lambda: cls.list_workers(db, current_user),
+            "mis_pedidos_registrados": lambda: cls.get_my_orders(
+                db, current_user, limit=arguments.get("limit", 10)
             ),
         }
         handler = handlers.get(name)

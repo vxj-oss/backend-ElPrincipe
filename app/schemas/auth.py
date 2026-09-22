@@ -1,10 +1,10 @@
 from typing import Optional
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
-    nombre_usuario: str
-    password: str
+    nombre_usuario: str = Field(..., max_length=100)
+    password: str = Field(..., max_length=200)
 
 
 class Token(BaseModel):

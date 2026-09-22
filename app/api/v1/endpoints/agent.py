@@ -34,7 +34,7 @@ def chat_with_agent(
     """Procesa una consulta comercial con el Agente IA, que consulta inventario y contexto de negocio"""
     return AgentService.execute_query(
         db=db,
-        user_id=current_user.id,
+        current_user=current_user,
         prompt=payload.mensaje,
         session_id=payload.sesion_id,
         contexto=payload.contexto_adicional,

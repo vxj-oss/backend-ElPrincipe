@@ -11,7 +11,7 @@ class ProductBase(BaseModel):
     sku: str = Field(..., max_length=50)
     nombre: str = Field(..., max_length=200)
     descripcion: Optional[str] = None
-    unidad_medida: Literal["Galón", "Bidón 5L", "Saco 15Kg", "Unidad"]
+    unidad_medida: str = Field(..., max_length=100)
     precio_unitario: Decimal = Field(..., ge=0, decimal_places=2)
     precio_costo: Decimal = Field(..., ge=0, decimal_places=2)
     stock_actual: int = Field(default=0, ge=0)
@@ -29,7 +29,7 @@ class ProductUpdate(BaseModel):
     sku: Optional[str] = Field(None, max_length=50)
     nombre: Optional[str] = Field(None, max_length=200)
     descripcion: Optional[str] = None
-    unidad_medida: Optional[Literal["Galón", "Bidón 5L", "Saco 15Kg", "Unidad"]] = None
+    unidad_medida: Optional[str] = Field(None, max_length=100)
     precio_unitario: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
     precio_costo: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
     stock_actual: Optional[int] = Field(None, ge=0)

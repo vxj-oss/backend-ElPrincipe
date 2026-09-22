@@ -79,6 +79,28 @@ def get_customer_request_detail(
     return req
 
 
+@router.delete(
+    "/{request_id}",
+    summary="Eliminar una solicitud de cliente",
+)
+def delete_customer_request(
+    request_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_active_user),
+):
+    info = SolicitudClienteService.delete(db, request_id)
+    HistoryService.log(
+        db, "ELIMINAR", "Solicitudes", current_user.id,
+        {
+            "entidad": info["codigo_solicitud"],
+            "descripcion": f"Eliminó la solicitud {info['codigo_solicitud']} de {info['cliente_nombre']}",
+        },
+        request.client.host if request.client else None,
+    )
+    return {"message": "Solicitud eliminada correctamente."}
+
+
 @router.post(
     "/validate-order",
     response_model=ComparacionPedidoResponse,
