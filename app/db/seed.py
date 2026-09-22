@@ -181,7 +181,7 @@ def seed_data(db: Session) -> None:
             logger.info(f" Cliente '{cli['razon_social']}' registrado.")
 
     db.commit()
-    logger.info("🎉 Proceso de seed finalizado con éxito.")
+    logger.info("Proceso de seed finalizado con éxito.")
 
 
 def run_seed() -> None:

@@ -2,7 +2,7 @@ from datetime import datetime, time, timedelta
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete as sa_delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.history import HistorialAuditoria
@@ -141,6 +141,16 @@ class HistoryService:
             "por_pagina": por_pagina,
             "total_paginas": total_paginas,
         }
+
+    @staticmethod
+    def delete_by_range(db: Session, desde: datetime, hasta: datetime) -> int:
+        stmt = sa_delete(HistorialAuditoria).where(
+            HistorialAuditoria.fecha_hora >= desde,
+            HistorialAuditoria.fecha_hora <= hasta,
+        )
+        resultado = db.execute(stmt)
+        db.commit()
+        return resultado.rowcount or 0
 
     @staticmethod
     def get_stats(db: Session) -> Dict[str, Any]:

@@ -117,3 +117,25 @@ def update_term(
         request.client.host if request.client else None,
     )
     return term
+
+
+@router.delete(
+    "/{term_id}",
+    summary="Eliminar condición comercial",
+)
+def delete_term(
+    term_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_active_user),
+):
+    info = CommercialTermService.delete(db, term_id)
+    HistoryService.log(
+        db, "ELIMINAR", "Condiciones", current_user.id,
+        {
+            "entidad": f"Condición {term_id}",
+            "descripcion": f"Eliminó la condición {info['tipo_condicion']} del cliente {info['cliente_nombre']}",
+        },
+        request.client.host if request.client else None,
+    )
+    return {"message": "Condición comercial eliminada correctamente."}

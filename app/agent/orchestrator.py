@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.agent.context_builder import ContextBuilder
 from app.agent.llm_client import llm_client
-from app.agent.prompts import DECISION_ASSISTANT_PROMPT, SYSTEM_PROMPT
+from app.agent.prompts import DECISION_ASSISTANT_PROMPT, SYSTEM_PROMPT, build_identity_context
 from app.agent.tools import CommercialTools
+from app.models.user import Usuario
 
 logger = logging.getLogger("elprincipe.agent.orchestrator")
 
@@ -20,7 +21,7 @@ class AgentOrchestrator:
     @staticmethod
     def handle_query(
         db: Session,
-        user_id: int,
+        current_user: Usuario,
         prompt: str,
         session_id: Optional[int] = None,
         contexto: Optional[Dict[str, Any]] = None,
@@ -32,11 +33,16 @@ class AgentOrchestrator:
             )
         )
 
+        system_prompt = SYSTEM_PROMPT + build_identity_context(current_user)
+        tools_relevantes = CommercialTools.select_relevant_tools(prompt)
+
         respuesta_texto = llm_client.generate_response(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             user_prompt=formatted_user_prompt,
-            tools=CommercialTools.TOOL_SCHEMAS,
-            tool_dispatcher=lambda name, args: CommercialTools.dispatch(db, name, args),
+            tools=tools_relevantes,
+            tool_dispatcher=lambda name, args: CommercialTools.dispatch(
+                db, current_user, name, args
+            ),
         )
 
         return {
