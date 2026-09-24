@@ -35,7 +35,6 @@ class Usuario(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    # Relaciones
     pedidos: Mapped[List["Pedido"]] = relationship("Pedido", back_populates="usuario")
     sesiones: Mapped[List["SesionAgente"]] = relationship("SesionAgente", back_populates="usuario")
     decisiones: Mapped[List["DecisionComercial"]] = relationship(

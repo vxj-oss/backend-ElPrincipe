@@ -1,3 +1,4 @@
+import re
 import uuid
 from decimal import Decimal
 from typing import List, Optional
@@ -66,49 +67,51 @@ class OrderService:
             )
             politica_base = db.scalar(stmt)
 
-        dias_pedido = 0
-        if "15d" in forma_pago or "15" in forma_pago:
-            dias_pedido = 15
-        elif "30d" in forma_pago or "30" in forma_pago:
-            dias_pedido = 30
-
         tiene_falla = False
-        motivos = []
+        motivo = "Condición comercial conforme con la política pactada."
 
-        dias_permitidos = (
-            politica_base.dias_plazo_pactados
-            if politica_base and politica_base.dias_plazo_pactados is not None
-            else 0
-        )
-        limite_credito = (
-            politica_base.limite_credito_asignado
-            if politica_base and politica_base.limite_credito_asignado
-            else Decimal("0.00")
-        )
-
-        if dias_pedido != dias_permitidos:
-            tiene_falla = True
-            pactado_txt = f"Crédito {dias_permitidos}d" if dias_permitidos > 0 else "Contado"
-            digitado_txt = f"Crédito {dias_pedido}d" if dias_pedido > 0 else "Contado"
-            motivos.append(
-                f"Discrepancia en condición comercial: Se digitó '{digitado_txt}' pero la condición pactada seleccionada es '{pactado_txt}'."
-            )
-
-        if dias_pedido > 0 and limite_credito > 0 and monto_total > limite_credito:
-            tiene_falla = True
-            motivos.append(
-                f"Límite de crédito excedido: Total de S/ {monto_total:.2f} supera el límite autorizado de S/ {limite_credito:.2f}."
-            )
+        if not politica_base:
+            if (forma_pago or "").strip().lower() != "contado":
+                tiene_falla = True
+                motivo = (
+                    f"Discrepancia en condición comercial: Se digitó '{forma_pago}' pero el "
+                    "cliente no tiene ninguna condición pactada (Estricto Contado)."
+                )
+        elif politica_base.tipo_condicion == "Credito":
+            match = re.search(r"(\d+)", forma_pago or "")
+            dias_digitados = int(match.group(1)) if match else 0
+            dias_pactados = politica_base.dias_plazo_pactados or 0
+            if dias_digitados != dias_pactados:
+                tiene_falla = True
+                motivo = (
+                    f"Discrepancia en condición comercial: Se digitó 'Crédito {dias_digitados}d' "
+                    f"pero la condición pactada es 'Crédito {dias_pactados}d'."
+                )
+        elif politica_base.tipo_condicion == "Descuento":
+            match = re.search(r"(\d+)", forma_pago or "")
+            pct_digitado = Decimal(match.group(1)) if match else Decimal("0")
+            pct_pactado = politica_base.porcentaje_descuento or Decimal("0")
+            if pct_digitado != pct_pactado:
+                tiene_falla = True
+                motivo = (
+                    f"Discrepancia en condición comercial: Se digitó 'Descuento {pct_digitado}%' "
+                    f"pero la condición pactada es 'Descuento {pct_pactado}%'."
+                )
+        elif politica_base.tipo_condicion == "Forma_Pago":
+            digitado = (forma_pago or "").strip()
+            pactado = politica_base.forma_pago_pactada or "Contado"
+            if digitado.lower() != pactado.lower():
+                tiene_falla = True
+                motivo = (
+                    f"Discrepancia en condición comercial: Se digitó '{digitado}' pero la "
+                    f"condición pactada es '{pactado}'."
+                )
 
         return FallaCondicionComercial(
             pedido_id=pedido_id,
             condicion_comercial_id=politica_base.id if politica_base else None,
             tiene_falla=tiene_falla,
-            motivo_falla=(
-                " | ".join(motivos)
-                if tiene_falla
-                else "Condición comercial conforme con la política pactada."
-            ),
+            motivo_falla=motivo,
         )
 
     @staticmethod
@@ -129,7 +132,10 @@ class OrderService:
     def _descuento_pactado(db: Session, cliente_id: int) -> Decimal:
         politica = db.scalar(
             select(CondicionComercial)
-            .where(CondicionComercial.cliente_id == cliente_id)
+            .where(
+                CondicionComercial.cliente_id == cliente_id,
+                CondicionComercial.tipo_condicion == "Descuento",
+            )
             .order_by(CondicionComercial.id.desc())
         )
         if politica and politica.porcentaje_descuento:

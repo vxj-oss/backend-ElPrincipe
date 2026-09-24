@@ -1,6 +1,5 @@
 import re
 from datetime import datetime
-from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, selectinload
@@ -9,7 +8,6 @@ from app.models.category import Categoria
 from app.models.commercial_term import CondicionComercial
 from app.models.customer import Cliente
 from app.models.customer_request import SolicitudCliente
-from app.models.customer_request_item import SolicitudClienteDetalle
 from app.models.order import Pedido
 from app.models.order_item import DetallePedido
 from app.models.product import Producto
@@ -52,7 +50,7 @@ class CommercialTools:
                 "tipo_condicion": c.tipo_condicion,
                 "plazo_dias": c.dias_plazo_pactados,
                 "descuento_pct": float(c.porcentaje_descuento or 0),
-                "limite_credito": float(c.limite_credito_asignado or 0),
+                "forma_pago_pactada": c.forma_pago_pactada,
             })
         return resultado
 
@@ -447,7 +445,7 @@ class CommercialTools:
                     "tipo_condicion": c.tipo_condicion,
                     "plazo_dias": c.dias_plazo_pactados,
                     "descuento_pct": float(c.porcentaje_descuento or 0),
-                    "limite_credito": float(c.limite_credito_asignado or 0),
+                    "forma_pago_pactada": c.forma_pago_pactada,
                 }
                 for c in condiciones
             ] or "Sin condiciones pactadas",

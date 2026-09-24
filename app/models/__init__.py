@@ -3,6 +3,7 @@ from .agent_session import SesionAgente
 from .base import Base
 from .category import Categoria
 from .commercial_term import CondicionComercial
+from .condicion_opcion import OpcionCondicionComercial
 from .configuracion import ConfiguracionSistema
 from .commercial_term_failure import FallaCondicionComercial
 from .customer import Cliente
@@ -27,6 +28,7 @@ __all__ = [
     "DetallePedido",
     "MovimientoStock",
     "CondicionComercial",
+    "OpcionCondicionComercial",
     "ConfiguracionSistema",
     "FallaCondicionComercial",
     "RegistroIndicador",

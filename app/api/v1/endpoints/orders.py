@@ -63,7 +63,6 @@ def create_order(
 ):
     order = OrderService.create(db, user_id=current_user.id, order_in=order_in)
 
-    # Detalle de auditoría desde FallaCondicionComercial
     desc_audit = (
         f"Creó pedido {order.codigo_pedido} por S/ {float(order.monto_total):,.2f}"
     )

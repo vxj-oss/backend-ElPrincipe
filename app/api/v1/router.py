@@ -5,6 +5,7 @@ from app.api.v1.endpoints import (
     auth,
     categories,
     commercial_terms,
+    condicion_opciones,
     customers,
     dashboard,
     decisions,
@@ -27,6 +28,7 @@ api_router.include_router(products.router)
 api_router.include_router(customers.router)
 api_router.include_router(orders.router)
 api_router.include_router(commercial_terms.router)
+api_router.include_router(condicion_opciones.router)
 api_router.include_router(indicators.router)
 api_router.include_router(agent.router)
 api_router.include_router(reports.router)

@@ -35,6 +35,5 @@ class DetallePedido(Base):
     )
     descripcion_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Relaciones
     pedido: Mapped["Pedido"] = relationship("Pedido", back_populates="detalles")
     producto: Mapped["Producto"] = relationship("Producto", back_populates="detalles")

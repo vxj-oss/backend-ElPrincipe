@@ -53,7 +53,6 @@ def seed_data(db: Session) -> None:
         db.add(asesor_user)
         logger.info(f"Usuario Asesor Comercial '{settings.SEED_ASESOR_USERNAME}' creado.")
 
-    # ── 2. Categorías ─────────────────────────────────────────────────────────
     categorias_data = [
         {"nombre": "Detergentes y Desinfectantes", "descripcion": "Línea de limpieza profunda y desinfección industrial"},
         {"nombre": "Lavavajillas y Desengrasantes", "descripcion": "Químicos para áreas de cocina, grasas pesadas y vajilla"},

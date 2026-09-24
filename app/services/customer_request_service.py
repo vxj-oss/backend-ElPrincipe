@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
@@ -7,7 +8,6 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.agent.llm_client import llm_client
 from app.models.commercial_term import CondicionComercial
-from app.models.customer import Cliente
 from app.models.customer_request import SolicitudCliente
 from app.models.customer_request_item import SolicitudClienteDetalle
 from app.models.product import Producto
@@ -105,48 +105,42 @@ class SolicitudClienteService:
         )
         politica = db.scalar(stmt_cond)
 
-        dias_pedido = 0
         forma_pago = payload.forma_pago or "Contado"
-        if "15d" in forma_pago or "15" in forma_pago:
-            dias_pedido = 15
-        elif "30d" in forma_pago or "30" in forma_pago:
-            dias_pedido = 30
 
-        dias_permitidos = (
-            politica.dias_plazo_pactados
-            if politica and politica.dias_plazo_pactados is not None
-            else 0
-        )
-        limite_credito = (
-            politica.limite_credito_asignado
-            if politica and politica.limite_credito_asignado
-            else 0
-        )
-
-        monto_total_pedido = sum(
-            (it.cantidad * float(it.precio_unitario or 0))
-            for it in payload.items_pedido
-        )
-
-        if dias_pedido != dias_permitidos:
-            pactado_txt = f"Crédito {dias_permitidos}d" if dias_permitidos > 0 else "Contado"
-            digitado_txt = f"Crédito {dias_pedido}d" if dias_pedido > 0 else "Contado"
-            discrepancias_condicion.append(
-                f"Discrepancia en condición comercial: Se seleccionó '{digitado_txt}' pero la condición pactada es '{pactado_txt}'."
-            )
-            sugerencias_condicion.append(f"Alinear la forma de pago a '{pactado_txt}'.")
-
-        if (
-            dias_pedido > 0
-            and limite_credito > 0
-            and monto_total_pedido > float(limite_credito)
-        ):
-            discrepancias_condicion.append(
-                f"Límite de crédito superado: El total (S/ {monto_total_pedido:.2f}) excede la línea de crédito autorizada (S/ {float(limite_credito):.2f})."
-            )
-            sugerencias_condicion.append(
-                "Reducir ítems o requerir pago al contado para el excedente."
-            )
+        if not politica:
+            if forma_pago.strip().lower() != "contado":
+                discrepancias_condicion.append(
+                    f"Discrepancia en condición comercial: Se seleccionó '{forma_pago}' pero el "
+                    "cliente no tiene ninguna condición pactada (Estricto Contado)."
+                )
+                sugerencias_condicion.append("Alinear la condición de pago a 'Contado'.")
+        elif politica.tipo_condicion == "Credito":
+            match = re.search(r"(\d+)", forma_pago)
+            dias_digitados = int(match.group(1)) if match else 0
+            dias_pactados = politica.dias_plazo_pactados or 0
+            if dias_digitados != dias_pactados:
+                pactado_txt = f"Crédito {dias_pactados}d"
+                digitado_txt = f"Crédito {dias_digitados}d"
+                discrepancias_condicion.append(
+                    f"Discrepancia en condición comercial: Se seleccionó '{digitado_txt}' pero la condición pactada es '{pactado_txt}'."
+                )
+                sugerencias_condicion.append(f"Alinear la condición de pago a '{pactado_txt}'.")
+        elif politica.tipo_condicion == "Descuento":
+            match = re.search(r"(\d+)", forma_pago)
+            pct_digitado = int(match.group(1)) if match else 0
+            pct_pactado = int(politica.porcentaje_descuento or 0)
+            if pct_digitado != pct_pactado:
+                discrepancias_condicion.append(
+                    f"Discrepancia en condición comercial: Se seleccionó 'Descuento {pct_digitado}%' pero la condición pactada es 'Descuento {pct_pactado}%'."
+                )
+                sugerencias_condicion.append(f"Alinear el descuento aplicado a {pct_pactado}%.")
+        elif politica.tipo_condicion == "Forma_Pago":
+            pactado = politica.forma_pago_pactada or "Contado"
+            if forma_pago.strip().lower() != pactado.lower():
+                discrepancias_condicion.append(
+                    f"Discrepancia en condición comercial: Se seleccionó '{forma_pago}' pero la condición pactada es '{pactado}'."
+                )
+                sugerencias_condicion.append(f"Alinear la condición de pago a '{pactado}'.")
 
         solicitud = None
         solicitado_data = []

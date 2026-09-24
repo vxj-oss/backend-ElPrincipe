@@ -19,20 +19,21 @@ class CondicionComercial(Base):
     )
     tipo_condicion: Mapped[str] = mapped_column(
         Enum(
-            "Plazo_Credito",
-            "Descuento_Volumen",
-            "Limite_Credito",
+            "Credito",
+            "Descuento",
             "Forma_Pago",
             name="tipo_condicion_enum",
         ),
         nullable=False,
     )
-    dias_plazo_pactados: Mapped[Optional[int]] = mapped_column(nullable=True, default=0)
+    dias_plazo_pactados: Mapped[Optional[int]] = mapped_column(nullable=True, default=None)
     porcentaje_descuento: Mapped[Optional[Decimal]] = mapped_column(
-        Numeric(5, 2), nullable=True, default=Decimal("0.00")
+        Numeric(5, 2), nullable=True, default=None
     )
-    limite_credito_asignado: Mapped[Optional[Decimal]] = mapped_column(
-        Numeric(12, 2), nullable=True, default=Decimal("0.00")
+    forma_pago_pactada: Mapped[Optional[str]] = mapped_column(
+        Enum("Contado", "Tarjeta", "Otro", name="forma_pago_pactada_enum"),
+        nullable=True,
+        default=None,
     )
     fecha_registro: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

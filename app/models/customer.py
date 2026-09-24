@@ -42,7 +42,6 @@ class Cliente(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    # Relaciones
     pedidos: Mapped[List["Pedido"]] = relationship("Pedido", back_populates="cliente")
     solicitudes: Mapped[List["SolicitudCliente"]] = relationship("SolicitudCliente", back_populates="cliente")
     condiciones: Mapped[List["CondicionComercial"]] = relationship(

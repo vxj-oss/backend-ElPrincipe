@@ -5,15 +5,47 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.commercial_term import CondicionComercial
-from app.models.commercial_term_failure import FallaCondicionComercial
 from app.models.order import Pedido
 from app.schemas.commercial_term import CommercialTermCreate, CommercialTermUpdate
+from app.services.condicion_opcion_service import CondicionOpcionService
 from app.services.indicator_service import IndicatorService
 
 ESTADOS_NO_CONFIRMADOS = ("Pendiente",)
 
+CAMPO_POR_TIPO = {
+    "Credito": "dias_plazo_pactados",
+    "Descuento": "porcentaje_descuento",
+    "Forma_Pago": "forma_pago_pactada",
+}
+
+
+def _valores_coinciden(valor, opcion_catalogo: str) -> bool:
+    a, b = str(valor).strip(), opcion_catalogo.strip()
+    if a == b:
+        return True
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return False
+
 
 class CommercialTermService:
+    @staticmethod
+    def _validar_valor_en_catalogo(db: Session, tipo_condicion: str, valor) -> None:
+        if valor is None:
+            return
+        valores_validos = CondicionOpcionService.valores_activos(db, tipo_condicion)
+        if not valores_validos:
+            return
+        if not any(_valores_coinciden(valor, v) for v in valores_validos):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"'{valor}' no es una opción vigente del catálogo para {tipo_condicion}. "
+                    f"Opciones válidas: {', '.join(valores_validos)}."
+                ),
+            )
+
     @staticmethod
     def get_all(
         db: Session,
@@ -86,6 +118,9 @@ class CommercialTermService:
     @staticmethod
     def create(db: Session, term_in: CommercialTermCreate) -> CondicionComercial:
         datos = term_in.model_dump()
+        CommercialTermService._validar_valor_en_catalogo(
+            db, datos["tipo_condicion"], datos.get(CAMPO_POR_TIPO[datos["tipo_condicion"]])
+        )
         existente = db.scalar(
             select(CondicionComercial).where(
                 CondicionComercial.cliente_id == datos["cliente_id"],
@@ -122,7 +157,13 @@ class CommercialTermService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Condición comercial no encontrada",
             )
-        for key, value in term_in.model_dump(exclude_unset=True).items():
+        datos = term_in.model_dump(exclude_unset=True)
+        tipo_resultante = datos.get("tipo_condicion", term.tipo_condicion)
+        campo_valor = CAMPO_POR_TIPO.get(tipo_resultante)
+        if campo_valor and campo_valor in datos:
+            CommercialTermService._validar_valor_en_catalogo(db, tipo_resultante, datos[campo_valor])
+
+        for key, value in datos.items():
             setattr(term, key, value)
         db.flush()
         CommercialTermService._reauditar_pedidos_cliente(db, term.cliente_id)

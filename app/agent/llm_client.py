@@ -14,13 +14,6 @@ class LLMClient:
         self.provider = settings.LLM_PROVIDER
         self.timeout = httpx.Timeout(300.0, connect=30.0)
 
-        # --- Ollama (local) — deshabilitado, solo se usa Groq por ahora. ---
-        # if self.provider == "groq":
-        #     self.base_url = settings.GROQ_BASE_URL.rstrip("/")
-        #     self.model = settings.GROQ_MODEL
-        # else:
-        #     self.base_url = settings.OLLAMA_BASE_URL.rstrip("/")
-        #     self.model = settings.OLLAMA_MODEL
         self.base_url = settings.GROQ_BASE_URL.rstrip("/")
         self.model = settings.GROQ_MODEL
 
@@ -31,46 +24,8 @@ class LLMClient:
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_dispatcher: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
     ) -> str:
-        # if self.provider == "groq":
-        #     return self._generate_groq(system_prompt, user_prompt, tools, tool_dispatcher)
-        # return self._generate_ollama(system_prompt, user_prompt)
         return self._generate_groq(system_prompt, user_prompt, tools, tool_dispatcher)
 
-    # --- Ollama (local) — deshabilitado, solo se usa Groq por ahora.
-    # Para reactivarlo: descomentar este método y las ramas "if" de arriba,
-    # y poner LLM_PROVIDER=ollama en el .env.
-    #
-    # def _generate_ollama(self, system_prompt: str, user_prompt: str) -> str:
-    #     url = f"{self.base_url}/api/chat"
-    #     payload = {
-    #         "model": self.model,
-    #         "messages": [
-    #             {"role": "system", "content": system_prompt},
-    #             {"role": "user", "content": user_prompt},
-    #         ],
-    #         "stream": False,
-    #         "options": {
-    #             "temperature": 0.1,
-    #             "top_p": 0.8,
-    #             "num_predict": 400,
-    #         },
-    #     }
-    #
-    #     try:
-    #         with httpx.Client(timeout=self.timeout) as client:
-    #             response = client.post(url, json=payload)
-    #             response.raise_for_status()
-    #             data = response.json()
-    #             return data.get("message", {}).get("content", "").strip()
-    #     except httpx.ConnectError:
-    #         logger.error(f"No se pudo conectar a Ollama en {self.base_url}.")
-    #         return "El servicio local de Inteligencia Artificial no se encuentra disponible."
-    #     except httpx.TimeoutException:
-    #         logger.error(f"Timeout al esperar respuesta de Ollama ({self.model}).")
-    #         return "El modelo tardó más del tiempo esperado en responder. Por favor, reintenta tu consulta."
-    #     except Exception as e:
-    #         logger.error(f"Error inesperado en LLM (Ollama): {e}")
-    #         return f"Ocurrió un error al procesar la respuesta: {str(e)}"
 
     def _generate_groq(
         self,

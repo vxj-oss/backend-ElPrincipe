@@ -1,4 +1,4 @@
-from typing import Generator, Optional
+from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -9,9 +9,6 @@ from app.core.security import decode_access_token
 from app.models.user import Usuario
 from app.services.user_service import UserService
 
-# auto_error=False: permite que la cookie httpOnly sea la vía principal de
-# autenticación del navegador; el header Authorization sigue disponible como
-# respaldo (usado por Swagger UI / clientes API no-browser).
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login-swagger", auto_error=False)
 
 

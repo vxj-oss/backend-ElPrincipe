@@ -37,7 +37,6 @@ class Producto(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    # Relaciones
     categoria: Mapped["Categoria"] = relationship("Categoria", back_populates="productos")
     detalles: Mapped[List["DetallePedido"]] = relationship(
         "DetallePedido", back_populates="producto"

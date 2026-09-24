@@ -48,56 +48,44 @@ from .report import IndicatorReportResponse, ReportFilterRequest, SalesKPIReport
 from .user import UserCreate, UserResponse, UserUpdate
 
 __all__ = [
-    # Auth
     "LoginRequest",
     "Token",
     "TokenPayload",
     "UserAuthResponse",
-    # User
     "UserCreate",
     "UserUpdate",
     "UserResponse",
-    # Category
     "CategoryCreate",
     "CategoryUpdate",
     "CategoryResponse",
-    # Product
     "ProductCreate",
     "ProductUpdate",
     "ProductResponse",
-    # Customer
     "CustomerCreate",
     "CustomerUpdate",
     "CustomerResponse",
-    # Customer Request
     "SolicitudClienteBase",
     "SolicitudClienteCreate",
     "SolicitudClienteResponse",
     "ComparacionPedidoItem",
     "ComparacionPedidoRequest",
     "ComparacionPedidoResponse",
-    # Customer Request Item
     "SolicitudClienteDetalleBase",
     "SolicitudClienteDetalleCreate",
     "SolicitudClienteDetalleResponse",
-    # Order Item
     "OrderItemCreate",
     "OrderItemUpdate",
     "OrderItemResponse",
-    # Commercial Term
     "CommercialTermCreate",
     "CommercialTermUpdate",
     "CommercialTermResponse",
-    # Commercial Term Failure (Fallas CC)
     "CommercialTermFailureBase",
     "CommercialTermFailureCreate",
     "CommercialTermFailureUpdate",
     "CommercialTermFailureResponse",
-    # Order
     "OrderCreate",
     "OrderUpdate",
     "OrderResponse",
-    # Agent
     "AgentMessageBase",
     "AgentMessageCreate",
     "AgentMessageResponse",
@@ -106,14 +94,11 @@ __all__ = [
     "AgentSessionResponse",
     "AgentQueryRequest",
     "AgentQueryResponse",
-    # Indicator
     "IndicatorLogCreate",
     "IndicatorLogResponse",
     "IndicatorSummaryResponse",
-    # History
     "AuditHistoryCreate",
     "AuditHistoryResponse",
-    # Report
     "ReportFilterRequest",
     "SalesKPIReport",
     "IndicatorReportResponse",

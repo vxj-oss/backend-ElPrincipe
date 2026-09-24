@@ -11,7 +11,6 @@ from app.models.user import Usuario
 from app.schemas.agent import (
     AgentQueryRequest,
     AgentQueryResponse,
-    AgentSessionCreate,
     AgentSessionResponse,
 )
 from app.services.agent_service import AgentService
