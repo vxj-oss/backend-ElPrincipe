@@ -30,6 +30,22 @@ class CondicionOpcionService:
         return [o.valor for o in opciones]
 
     @staticmethod
+    def _en_uso_por_condiciones(db: Session, opcion: OpcionCondicionComercial) -> bool:
+        from app.models.commercial_term import CondicionComercial
+        from app.services.commercial_term_service import CAMPO_POR_TIPO, _valores_coinciden
+
+        campo = CAMPO_POR_TIPO.get(opcion.tipo_condicion)
+        if not campo:
+            return False
+        columna = getattr(CondicionComercial, campo)
+        stmt = select(CondicionComercial).where(
+            CondicionComercial.tipo_condicion == opcion.tipo_condicion,
+            columna.is_not(None),
+        )
+        condiciones = db.scalars(stmt).all()
+        return any(_valores_coinciden(getattr(c, campo), opcion.valor) for c in condiciones)
+
+    @staticmethod
     def create(db: Session, opcion_in: OpcionCondicionCreate) -> OpcionCondicionComercial:
         existente = db.scalar(
             select(OpcionCondicionComercial).where(
@@ -54,7 +70,18 @@ class CondicionOpcionService:
         if not opcion:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opción no encontrada")
 
-        for key, value in opcion_in.model_dump(exclude_unset=True).items():
+        datos = opcion_in.model_dump(exclude_unset=True)
+        if datos.get("activo") is False and opcion.activo:
+            if CondicionOpcionService._en_uso_por_condiciones(db, opcion):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"No se puede desactivar '{opcion.etiqueta}': hay condiciones "
+                        "comerciales pactadas que usan este valor."
+                    ),
+                )
+
+        for key, value in datos.items():
             setattr(opcion, key, value)
 
         db.commit()
@@ -66,6 +93,14 @@ class CondicionOpcionService:
         opcion = CondicionOpcionService.get_by_id(db, opcion_id)
         if not opcion:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Opción no encontrada")
+        if CondicionOpcionService._en_uso_por_condiciones(db, opcion):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"No se puede eliminar '{opcion.etiqueta}': hay condiciones comerciales "
+                    "pactadas que usan este valor. Desactívala en su lugar."
+                ),
+            )
         db.delete(opcion)
         db.commit()
         return True

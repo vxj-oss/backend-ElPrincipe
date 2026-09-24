@@ -145,16 +145,16 @@ class OrderService:
     @staticmethod
     def _evaluar_precio(precio_digitado: Decimal, prod: Producto, descuento_pct: Decimal):
         vigente = Decimal(str(prod.precio_unitario or 0))
-        minimo = (vigente * (Decimal("100") - descuento_pct) / Decimal("100")).quantize(Decimal("0.01"))
+        esperado = (vigente * (Decimal("100") - descuento_pct) / Decimal("100")).quantize(Decimal("0.01"))
         digitado = Decimal(str(precio_digitado))
-        if digitado > vigente + Decimal("0.01"):
+        if digitado > esperado + Decimal("0.01"):
+            extra = f" (descuento pactado {descuento_pct:.0f}% no aplicado)" if descuento_pct > 0 else ""
             return (
-                f"Precio digitado S/ {digitado:.2f} supera el precio vigente S/ {vigente:.2f}."
+                f"Precio digitado S/ {digitado:.2f} supera el precio pactado S/ {esperado:.2f}{extra}."
             )
-        if digitado < minimo - Decimal("0.01"):
-            extra = f" (descuento pactado {descuento_pct:.0f}%)" if descuento_pct > 0 else ""
+        if digitado < esperado - Decimal("0.01"):
             return (
-                f"Precio digitado S/ {digitado:.2f} es menor al mínimo autorizado S/ {minimo:.2f}{extra}."
+                f"Precio digitado S/ {digitado:.2f} es menor al precio pactado S/ {esperado:.2f}."
             )
         return None
 

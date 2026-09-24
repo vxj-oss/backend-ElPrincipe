@@ -25,10 +25,7 @@ class Pedido(Base):
     codigo_pedido: Mapped[str] = mapped_column(String(30), unique=True, nullable=False, index=True)
     fecha_pedido: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     fecha_entrega: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    forma_pago: Mapped[str] = mapped_column(
-        Enum("Contado", "Credito 15d", "Credito 30d", name="forma_pago_enum"),
-        nullable=False,
-    )
+    forma_pago: Mapped[str] = mapped_column(String(50), nullable=False)
     estado: Mapped[str] = mapped_column(
         Enum("Pendiente", "Aprobado", "Entregado", "Cancelado", name="estado_pedido_enum"),
         nullable=False,
