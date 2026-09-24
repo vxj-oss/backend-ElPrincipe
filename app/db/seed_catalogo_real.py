@@ -25,7 +25,6 @@ from app.models.product import Producto
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("seed_catalogo_real")
 
-# ── Catálogo: categoria -> [(nombre, precio_venta), ...] ───────────────────
 CATALOGO: dict[str, list[tuple[str, float]]] = {
     "Limpieza y desinfección": [
         ("Pulidor en polvo con frasco Sapolio x 450 g", 6.50),
@@ -296,7 +295,6 @@ PREFIJO_SKU = {
     "Bolsas, papeleras y papel": "BOL",
 }
 
-# ── Derivación de unidad de medida a partir del nombre ──────────────────────
 _PATRONES_UNIDAD = [
     re.compile(r"bid[oó]n\s*x?\s*\d+(?:[.,]\d+)?\s*lt", re.IGNORECASE),
     re.compile(r"gal[oó]n\s*x?\s*\d+(?:[.,]\d+)?\s*lt", re.IGNORECASE),
@@ -320,7 +318,6 @@ def derivar_unidad_medida(nombre: str) -> str:
     return "Unidad"
 
 
-# ── Estimación de stock inicial por rango de precio ─────────────────────────
 def estimar_stock(precio: float) -> tuple[int, int]:
     """Devuelve (stock_actual, stock_minimo) estimados según el precio de venta.
     Productos baratos rotan más rápido -> más stock; productos caros/voluminosos

@@ -11,7 +11,6 @@ from alembic import op
 import sqlalchemy as sa
 
 
-# revision identifiers, used by Alembic.
 revision: str = 'b4cd6d0bd8cf'
 down_revision: Union[str, None] = '283c107f0a82'
 branch_labels: Union[str, Sequence[str], None] = None
@@ -19,13 +18,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1. Ajuste en clientes
     op.alter_column('clientes', 'limite_credito',
                existing_type=sa.NUMERIC(precision=12, scale=2),
                nullable=False,
                existing_server_default=sa.text('0.00'))
 
-    # 2. Crear tabla solicitudes_cliente
     op.create_table('solicitudes_cliente',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('codigo_solicitud', sa.String(length=50), nullable=False),
@@ -43,7 +40,6 @@ def upgrade() -> None:
     op.create_index(op.f('ix_solicitudes_cliente_codigo_solicitud'), 'solicitudes_cliente', ['codigo_solicitud'], unique=True)
     op.create_index(op.f('ix_solicitudes_cliente_id'), 'solicitudes_cliente', ['id'], unique=False)
 
-    # 3. Crear tabla solicitud_cliente_detalles
     op.create_table('solicitud_cliente_detalles',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('solicitud_id', sa.Integer(), nullable=False),

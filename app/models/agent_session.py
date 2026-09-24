@@ -22,7 +22,6 @@ class SesionAgente(Base):
     )
     esta_activa: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # Relaciones
     usuario: Mapped["Usuario"] = relationship("Usuario", back_populates="sesiones")
     mensajes: Mapped[List["MensajeAgente"]] = relationship(
         "MensajeAgente", back_populates="sesion", cascade="all, delete-orphan"

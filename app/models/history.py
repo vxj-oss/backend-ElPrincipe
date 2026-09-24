@@ -37,5 +37,4 @@ class HistorialAuditoria(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
 
-    # Relaciones
     usuario: Mapped[Optional["Usuario"]] = relationship("Usuario", back_populates="auditoria")

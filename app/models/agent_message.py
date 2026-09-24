@@ -28,7 +28,6 @@ class MensajeAgente(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
 
-    # Relaciones
     sesion: Mapped["SesionAgente"] = relationship("SesionAgente", back_populates="mensajes")
     decisiones: Mapped[List["DecisionComercial"]] = relationship(
         "DecisionComercial", back_populates="mensaje_agente"

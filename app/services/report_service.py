@@ -1,7 +1,7 @@
 import io
 from collections import Counter
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from openpyxl.chart import BarChart, PieChart, Reference
 from openpyxl.styles import Font

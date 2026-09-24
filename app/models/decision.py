@@ -45,7 +45,6 @@ class DecisionComercial(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
 
-    # Relaciones
     usuario: Mapped["Usuario"] = relationship("Usuario", back_populates="decisiones")
     pedido: Mapped[Optional["Pedido"]] = relationship("Pedido", back_populates="decisiones")
     mensaje_agente: Mapped[Optional["MensajeAgente"]] = relationship(

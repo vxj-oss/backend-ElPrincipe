@@ -27,11 +27,8 @@ class Settings(BaseSettings):
     LOGIN_MAX_ATTEMPTS: int = 3
     LOGIN_LOCKOUT_MINUTES: int = 15
 
-    LLM_PROVIDER: str = "ollama"  # "ollama" (local) | "groq" (nube)
+    LLM_PROVIDER: str = "ollama"
 
-    # --- Ollama (local) — deshabilitado, solo se usa Groq por ahora. ---
-    # OLLAMA_BASE_URL: str = "http://localhost:11434"
-    # OLLAMA_MODEL: str = "llama3"
 
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "openai/gpt-oss-120b"
@@ -63,10 +60,6 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def COOKIE_SAMESITE(self) -> str:
-        # "none" es obligatorio para que la cookie de sesión viaje entre dominios
-        # distintos (frontend en Vercel, backend en Railway). Los navegadores
-        # exigen Secure=True junto con SameSite=None, por eso solo se activa en
-        # producción — en local (http://localhost) rompería el login.
         return "none" if self.ENVIRONMENT == "production" else "lax"
 
     @computed_field

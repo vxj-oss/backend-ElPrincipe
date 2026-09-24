@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -39,7 +39,6 @@ class SolicitudCliente(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    # Relaciones
     cliente: Mapped["Cliente"] = relationship("Cliente", back_populates="solicitudes")
     usuario: Mapped["Usuario"] = relationship("Usuario")
     detalles: Mapped[List["SolicitudClienteDetalle"]] = relationship(
