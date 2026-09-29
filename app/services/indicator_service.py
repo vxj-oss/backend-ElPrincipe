@@ -82,7 +82,6 @@ class IndicatorService:
                 )
                 or 0
             )
-
         total_decisiones = _contar_decisiones()
         total_efectivas = _contar_decisiones(DecisionComercial.es_efectiva.is_(True))
         total_corregidas = _contar_decisiones(DecisionComercial.requirio_correccion.is_(True))

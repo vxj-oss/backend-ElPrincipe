@@ -5,10 +5,37 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_active_user
 from app.core.database import get_db
 from app.models.user import Usuario
+from app.schemas.activity_indicator import ActivityIndicatorSummary, DiaPoint
 from app.schemas.indicator import IndicatorLogResponse, IndicatorPeriodPoint
+from app.services.activity_indicator_service import ActivityIndicatorService
 from app.services.indicator_service import IndicatorService
 
 router = APIRouter(prefix="/indicators", tags=["Indicadores / KPIs"])
+
+
+@router.get(
+    "/actividad-comercial",
+    response_model=ActivityIndicatorSummary,
+    summary="Resumen de NSC, NPP y TPD del día actual",
+)
+def get_actividad_comercial(
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    return ActivityIndicatorService.calcular_resumen(db)
+
+
+@router.get(
+    "/actividad-comercial/serie",
+    response_model=List[DiaPoint],
+    summary="Serie histórica por día (NSC, NPP, TPD)",
+)
+def get_actividad_comercial_serie(
+    dias: int = 15,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    return ActivityIndicatorService.get_serie_dias(db, cantidad_dias=dias)
 
 
 @router.get("/daily", response_model=List[IndicatorPeriodPoint], summary="Evolución diaria real (Lun-Dom de la semana actual)")

@@ -16,7 +16,9 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.time import LIMA_TZ
 from app.models.customer import Cliente
+from app.models.customer_request import SolicitudCliente
 from app.models.order import Pedido
 from app.models.order_item import DetallePedido
 from app.models.product import Producto
@@ -448,6 +450,97 @@ class ReportService:
                     titulo="Distribución por Tipo de Error",
                     tipo="pie",
                 )
+        output.seek(0)
+        return output
+
+    @staticmethod
+    def generate_actividad_comercial_excel(db: Session, sigla: str, dias: int = 15) -> io.BytesIO:
+        from app.services.activity_indicator_service import ActivityIndicatorService
+
+        campo_por_sigla = {
+            "NSC": "solicitudes",
+            "NPP": "pedidos",
+            "TPD": "tiempo_promedio_decision_minutos",
+        }
+        columna_por_sigla = {
+            "NSC": "N° Solicitudes de Clientes (SA)",
+            "NPP": "N° Pedidos Procesados (PA)",
+            "TPD": "Tiempo Promedio de Decisión (min)",
+        }
+        hoja_por_sigla = {"NSC": "NSC_por_dia", "NPP": "NPP_por_dia", "TPD": "TPD_por_dia"}
+
+        campo = campo_por_sigla.get(sigla, "solicitudes")
+        columna = columna_por_sigla.get(sigla, "Valor")
+
+        serie = ActivityIndicatorService.get_serie_dias(db, cantidad_dias=dias)
+        data = [
+            {
+                "N° Registro": f"Día {i + 1}",
+                "Fecha": punto["label"],
+                columna: (
+                    round(punto[campo], 2) if punto[campo] is not None else "—"
+                ),
+            }
+            for i, punto in enumerate(serie)
+        ]
+        df = pd.DataFrame(data if data else [{"N° Registro": "—", "Fecha": "—", columna: "—"}])
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name=hoja_por_sigla.get(sigla, "Indicador"))
+        output.seek(0)
+        return output
+
+    @staticmethod
+    def generate_tpd_por_pedido_excel(db: Session) -> io.BytesIO:
+        stmt = (
+            select(Pedido, SolicitudCliente)
+            .join(SolicitudCliente, SolicitudCliente.id == Pedido.solicitud_id)
+            .where(Pedido.fecha_aprobacion.isnot(None))
+            .order_by(SolicitudCliente.fecha_solicitud.asc())
+        )
+        filas = db.execute(stmt).all()
+
+        data = []
+        for i, (pedido, solicitud) in enumerate(filas):
+            inicio = (solicitud.hora_apertura_modal or solicitud.fecha_solicitud).astimezone(LIMA_TZ)
+            fin = pedido.fecha_aprobacion.astimezone(LIMA_TZ)
+            minutos = (fin - inicio).total_seconds() / 60
+            apertura_pedido = pedido.hora_apertura_modal.astimezone(LIMA_TZ) if pedido.hora_apertura_modal else None
+            fin_solicitud = solicitud.fecha_solicitud.astimezone(LIMA_TZ)
+            min_solicitud = (fin_solicitud - inicio).total_seconds() / 60
+            min_pedido = (fin - apertura_pedido).total_seconds() / 60 if apertura_pedido else None
+            data.append(
+                {
+                    "Ítem": i + 1,
+                    "Hora de Inicio (Apertura del registro de solicitud)": inicio.strftime("%d/%m %H:%M"),
+                    "Hora de Apertura (Nuevo pedido)": apertura_pedido.strftime("%d/%m %H:%M") if apertura_pedido else "—",
+                    "Hora de Fin (Aprobación del pedido)": fin.strftime("%d/%m %H:%M"),
+                    "Etapa Solicitud (min)": round(min_solicitud, 2),
+                    "Etapa Pedido (min)": round(min_pedido, 2) if min_pedido is not None else "—",
+                    "Tiempo de Toma de Decisión (min)": round(minutos, 2),
+                }
+            )
+
+        df = pd.DataFrame(
+            data
+            if data
+            else [
+                {
+                    "Ítem": "—",
+                    "Hora de Inicio (Apertura del registro de solicitud)": "—",
+                    "Hora de Apertura (Nuevo pedido)": "—",
+                    "Hora de Fin (Aprobación del pedido)": "—",
+                    "Etapa Solicitud (min)": "—",
+                    "Etapa Pedido (min)": "—",
+                    "Tiempo de Toma de Decisión (min)": "—",
+                }
+            ]
+        )
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="TPD_por_pedido")
         output.seek(0)
         return output
 

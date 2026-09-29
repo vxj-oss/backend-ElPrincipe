@@ -19,6 +19,7 @@ class SolicitudClienteBase(BaseModel):
 
 class SolicitudClienteCreate(SolicitudClienteBase):
     detalles: List[SolicitudClienteDetalleCreate] = Field(..., min_length=1)
+    hora_apertura_modal: Optional[datetime] = None
 
 
 class SolicitudClienteResponse(SolicitudClienteBase):
@@ -28,7 +29,12 @@ class SolicitudClienteResponse(SolicitudClienteBase):
     codigo_solicitud: str
     usuario_id: int
     fecha_solicitud: datetime
+    hora_apertura_modal: Optional[datetime] = None
     estado: str
+    auditado_ia: bool = False
+    resultado_auditoria: Optional[str] = None
+    descripcion_auditoria: Optional[str] = None
+    fecha_auditoria: Optional[datetime] = None
     creado_en: datetime
     cliente: Optional[CustomerResponse] = None
     usuario: Optional[UserResponse] = None
@@ -56,3 +62,4 @@ class ComparacionPedidoResponse(BaseModel):
     descripcion_discrepancia: str
     analisis_ia: str
     sugerencias_correccion: List[str] = []
+    ia_disponible: bool = True

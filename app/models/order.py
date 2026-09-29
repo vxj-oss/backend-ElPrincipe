@@ -25,6 +25,8 @@ class Pedido(Base):
     codigo_pedido: Mapped[str] = mapped_column(String(30), unique=True, nullable=False, index=True)
     fecha_pedido: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     fecha_entrega: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    fecha_aprobacion: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    hora_apertura_modal: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     forma_pago: Mapped[str] = mapped_column(String(50), nullable=False)
     estado: Mapped[str] = mapped_column(
         Enum("Pendiente", "Aprobado", "Entregado", "Cancelado", name="estado_pedido_enum"),
@@ -36,6 +38,12 @@ class Pedido(Base):
         Boolean, nullable=False, default=False, server_default="false"
     )
     observaciones: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    auditado_ia: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    resultado_auditoria: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    descripcion_auditoria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fecha_auditoria: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     creado_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
