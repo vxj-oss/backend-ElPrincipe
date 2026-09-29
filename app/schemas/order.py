@@ -35,6 +35,7 @@ class OrderCreate(BaseModel):
     forma_pago: str = "Contado"
     estado: Optional[str] = "Pendiente"
     observaciones: Optional[str] = None
+    hora_apertura_modal: Optional[datetime] = None
     items: List[OrderItemCreate] = []
     auditoria_condicion: Optional[CommercialTermFailureCreate] = None
 
@@ -67,6 +68,10 @@ class OrderResponse(OrderBase):
     id: int
     creado_en: Optional[datetime] = None
     stock_descontado: bool = False
+    auditado_ia: bool = False
+    resultado_auditoria: Optional[str] = None
+    descripcion_auditoria: Optional[str] = None
+    fecha_auditoria: Optional[datetime] = None
     cliente: Optional[CustomerResponse] = None
     usuario: Optional[UserResponse] = None
     detalles: List[OrderItemResponse] = []

@@ -98,6 +98,41 @@ def download_order_errors_excel(
     )
 
 
+@router.get(
+    "/indicators/actividad/excel",
+    summary="Descargar serie diaria de un indicador comercial (NSC/NPP/TPD) en Excel",
+)
+def download_actividad_comercial_excel(
+    indicador: str,
+    dias: int = 15,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    sigla = indicador.upper()
+    buffer = ReportService.generate_actividad_comercial_excel(db, sigla, dias)
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={sigla.lower()}_por_dia.xlsx"},
+    )
+
+
+@router.get(
+    "/indicators/tpd/por-pedido/excel",
+    summary="Descargar tiempo de toma de decisión por pedido individual en Excel",
+)
+def download_tpd_por_pedido_excel(
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    buffer = ReportService.generate_tpd_por_pedido_excel(db)
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=tpd_por_pedido.xlsx"},
+    )
+
+
 @router.get("/indicators/excel", summary="Descargar reporte de indicadores en Excel")
 def download_indicators_excel(
     db: Session = Depends(get_db),

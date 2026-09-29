@@ -145,16 +145,16 @@ class OrderService:
     @staticmethod
     def _evaluar_precio(precio_digitado: Decimal, prod: Producto, descuento_pct: Decimal):
         vigente = Decimal(str(prod.precio_unitario or 0))
-        minimo = (vigente * (Decimal("100") - descuento_pct) / Decimal("100")).quantize(Decimal("0.01"))
+        esperado = (vigente * (Decimal("100") - descuento_pct) / Decimal("100")).quantize(Decimal("0.01"))
         digitado = Decimal(str(precio_digitado))
-        if digitado > vigente + Decimal("0.01"):
+        if digitado > esperado + Decimal("0.01"):
+            extra = f" (descuento pactado {descuento_pct:.0f}% no aplicado)" if descuento_pct > 0 else ""
             return (
-                f"Precio digitado S/ {digitado:.2f} supera el precio vigente S/ {vigente:.2f}."
+                f"Precio digitado S/ {digitado:.2f} supera el precio pactado S/ {esperado:.2f}{extra}."
             )
-        if digitado < minimo - Decimal("0.01"):
-            extra = f" (descuento pactado {descuento_pct:.0f}%)" if descuento_pct > 0 else ""
+        if digitado < esperado - Decimal("0.01"):
             return (
-                f"Precio digitado S/ {digitado:.2f} es menor al mínimo autorizado S/ {minimo:.2f}{extra}."
+                f"Precio digitado S/ {digitado:.2f} es menor al precio pactado S/ {esperado:.2f}."
             )
         return None
 
@@ -272,13 +272,23 @@ class OrderService:
                 detail="No se pueden crear pedidos para un cliente inactivo",
             )
 
-        solicitud = None
+        if not order_in.solicitud_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Para crear un pedido debe vincularlo a una solicitud de cliente.",
+            )
+        solicitud = SolicitudClienteService.get_by_id(db, order_in.solicitud_id)
+        if not solicitud:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Solicitud de cliente no encontrada",
+            )
+
         auditoria_ia = None
         cantidades_solicitadas = {}
         cantidades_solicitadas_por_nombre = {}
 
         if order_in.solicitud_id:
-            solicitud = SolicitudClienteService.get_by_id(db, order_in.solicitud_id)
             if solicitud:
                 for s_det in solicitud.detalles:
                     if s_det.producto_id:
@@ -317,6 +327,8 @@ class OrderService:
         if order_in.estado == "Entregado" and not fecha_ent:
             fecha_ent = ahora_lima()
 
+        resumen_auditoria = SolicitudClienteService.resumen_auditoria_pedido(auditoria_ia)
+        estado_inicial = order_in.estado or "Pendiente"
         db_order = Pedido(
             cliente_id=order_in.cliente_id,
             usuario_id=user_id,
@@ -326,8 +338,16 @@ class OrderService:
             fecha_entrega=fecha_ent,
             forma_pago=order_in.forma_pago,
             observaciones=order_in.observaciones,
-            estado=order_in.estado or "Pendiente",
+            estado=estado_inicial,
+            fecha_aprobacion=ahora_lima() if estado_inicial in ESTADOS_CONFIRMADOS else None,
+            hora_apertura_modal=SolicitudClienteService._normalizar_hora_apertura(
+                order_in.hora_apertura_modal
+            ),
             monto_total=Decimal("0.00"),
+            auditado_ia=resumen_auditoria["auditado_ia"],
+            resultado_auditoria=resumen_auditoria["resultado_auditoria"],
+            descripcion_auditoria=resumen_auditoria["descripcion_auditoria"],
+            fecha_auditoria=ahora_lima(),
         )
         db.add(db_order)
         db.flush()
@@ -417,6 +437,7 @@ class OrderService:
         ):
             db_order.estado = "Pendiente"
             db_order.fecha_entrega = None
+            db_order.fecha_aprobacion = None
 
         db_order.monto_total = total_pedido
 
@@ -609,6 +630,11 @@ class OrderService:
                 detail="No se puede aprobar el pedido: el cliente está inactivo.",
             )
 
+        if db_order.estado in ESTADOS_CONFIRMADOS and estado_anterior not in ESTADOS_CONFIRMADOS:
+            db_order.fecha_aprobacion = ahora_lima()
+        elif db_order.estado not in ESTADOS_CONFIRMADOS:
+            db_order.fecha_aprobacion = None
+
         items_despues = (
             [(it.producto_id, it.cantidad) for it in order_in.items]
             if items_reemplazados
@@ -701,6 +727,7 @@ class OrderService:
 
         db_order.estado = "Pendiente"
         db_order.fecha_entrega = None
+        db_order.fecha_aprobacion = None
         db_order.observaciones = f"[ERROR: {error_asignado}] {descripcion}".strip()
 
         db.commit()

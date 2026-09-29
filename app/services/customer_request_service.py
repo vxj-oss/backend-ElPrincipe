@@ -1,13 +1,17 @@
 import json
 import re
 import uuid
+from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.agent.llm_client import llm_client
+from app.core.time import LIMA_TZ, ahora_lima
 from app.models.commercial_term import CondicionComercial
+from app.models.customer import Cliente
 from app.models.customer_request import SolicitudCliente
 from app.models.customer_request_item import SolicitudClienteDetalle
 from app.models.product import Producto
@@ -20,6 +24,14 @@ from app.schemas.customer_request import (
 
 class SolicitudClienteService:
     @staticmethod
+    def _normalizar_hora_apertura(hora: Optional[datetime]) -> Optional[datetime]:
+        if hora is None:
+            return None
+        if hora.tzinfo is None:
+            hora = hora.replace(tzinfo=LIMA_TZ)
+        return min(hora, ahora_lima())
+
+    @staticmethod
     def create_request(
         db: Session, user_id: int, payload: SolicitudClienteCreate
     ) -> SolicitudCliente:
@@ -31,6 +43,9 @@ class SolicitudClienteService:
             canal_recepcion=payload.canal_recepcion,
             observaciones=payload.observaciones,
             estado="Pendiente",
+            hora_apertura_modal=SolicitudClienteService._normalizar_hora_apertura(
+                payload.hora_apertura_modal
+            ),
         )
         db.add(solicitud)
         db.flush()
@@ -45,9 +60,136 @@ class SolicitudClienteService:
             )
             db.add(detalle)
 
+        db.flush()
+        db.refresh(solicitud)
+        resultado = SolicitudClienteService.audit_request(db, solicitud)
+        solicitud.auditado_ia = resultado["auditado_ia"]
+        solicitud.resultado_auditoria = resultado["resultado_auditoria"]
+        solicitud.descripcion_auditoria = resultado["descripcion_auditoria"]
+        solicitud.fecha_auditoria = ahora_lima()
+
         db.commit()
         db.refresh(solicitud)
         return solicitud
+
+    @staticmethod
+    def resumen_auditoria_pedido(auditoria: ComparacionPedidoResponse) -> Dict[str, Any]:
+        if not auditoria.ia_disponible:
+            return {
+                "auditado_ia": False,
+                "resultado_auditoria": "No_Disponible",
+                "descripcion_auditoria": auditoria.descripcion_discrepancia,
+            }
+        return {
+            "auditado_ia": True,
+            "resultado_auditoria": (
+                "Con_Observaciones" if auditoria.hay_discrepancia else "Conforme"
+            ),
+            "descripcion_auditoria": (
+                auditoria.descripcion_discrepancia
+                if auditoria.hay_discrepancia
+                else "Conforme."
+            ),
+        }
+
+    @staticmethod
+    def audit_request(db: Session, solicitud: SolicitudCliente) -> Dict[str, Any]:
+        observaciones: List[str] = []
+
+        cliente = db.get(Cliente, solicitud.cliente_id)
+        if cliente and cliente.estado != "Activo":
+            observaciones.append("El cliente está inactivo.")
+
+        detalles_data = []
+        for det in solicitud.detalles:
+            prod = db.get(Producto, det.producto_id) if det.producto_id else None
+            nombre = det.nombre_producto_solicitado
+            if not prod:
+                observaciones.append(
+                    f"'{nombre}' no coincide con ningún producto del catálogo."
+                )
+            else:
+                if not prod.activo:
+                    observaciones.append(f"El producto '{prod.nombre}' está inactivo.")
+                if (prod.stock_actual or 0) < det.cantidad_solicitada:
+                    observaciones.append(
+                        f"Stock insuficiente para '{prod.nombre}': disponible {prod.stock_actual}, solicitado {det.cantidad_solicitada}."
+                    )
+                if det.precio_esperado and prod.precio_unitario:
+                    diferencia = abs(det.precio_esperado - prod.precio_unitario) / prod.precio_unitario
+                    if diferencia > Decimal("0.10"):
+                        observaciones.append(
+                            f"El precio esperado de '{prod.nombre}' ({det.precio_esperado}) difiere más de 10% del precio vigente ({prod.precio_unitario})."
+                        )
+            detalles_data.append(
+                {
+                    "producto_solicitado": nombre,
+                    "producto_catalogo": prod.nombre if prod else None,
+                    "cantidad": det.cantidad_solicitada,
+                    "precio_esperado": float(det.precio_esperado) if det.precio_esperado else None,
+                    "precio_vigente": float(prod.precio_unitario) if prod else None,
+                    "stock_actual": prod.stock_actual if prod else None,
+                }
+            )
+
+        desde = ahora_lima() - timedelta(hours=24)
+        repetida = db.scalar(
+            select(SolicitudCliente.id).where(
+                SolicitudCliente.cliente_id == solicitud.cliente_id,
+                SolicitudCliente.estado == "Pendiente",
+                SolicitudCliente.id != solicitud.id,
+                SolicitudCliente.creado_en >= desde,
+            )
+        )
+        if repetida:
+            observaciones.append(
+                "El cliente tiene otra solicitud pendiente registrada en las últimas 24 horas."
+            )
+
+        system_prompt = (
+            "Eres el Auditor de Solicitudes de Distribuidora EL PRÍNCIPE. "
+            "Revisas si una solicitud de cliente está bien registrada antes de convertirse en pedido. "
+            "Considera coherencia de productos, cantidades, precios esperados y observaciones del cliente. "
+            "Las alertas automáticas ya calculadas son confiables; no las contradigas. "
+            "Responde estrictamente en JSON: "
+            '{"hay_observaciones": bool, "descripcion": str, "sugerencias": [str]}'
+        )
+        user_prompt = (
+            f"Canal de recepción: {solicitud.canal_recepcion}\n"
+            f"Observaciones del cliente: {solicitud.observaciones or 'ninguna'}\n"
+            f"=== ÍTEMS SOLICITADOS ===\n{json.dumps(detalles_data, ensure_ascii=False, indent=2)}\n"
+            f"=== ALERTAS AUTOMÁTICAS ===\n{json.dumps(observaciones, ensure_ascii=False)}\n"
+            "Genera el informe de auditoría."
+        )
+
+        respuesta = llm_client.generate_response(
+            system_prompt=system_prompt, user_prompt=user_prompt
+        )
+        try:
+            inicio = respuesta.find("{")
+            fin = respuesta.rfind("}") + 1
+            parsed = json.loads(respuesta[inicio:fin])
+        except Exception:
+            return {
+                "auditado_ia": False,
+                "resultado_auditoria": "No_Disponible",
+                "descripcion_auditoria": (
+                    " | ".join(observaciones)
+                    if observaciones
+                    else "El asistente de IA no estuvo disponible para auditar la solicitud."
+                ),
+            }
+
+        descripcion_ia = parsed.get("descripcion")
+        if not observaciones and parsed.get("hay_observaciones") and isinstance(descripcion_ia, str) and descripcion_ia.strip():
+            observaciones.append(descripcion_ia.strip())
+
+        con_observaciones = bool(observaciones)
+        return {
+            "auditado_ia": True,
+            "resultado_auditoria": "Con_Observaciones" if con_observaciones else "Conforme",
+            "descripcion_auditoria": " | ".join(observaciones) if con_observaciones else "Conforme.",
+        }
 
     @staticmethod
     def get_all(db: Session, skip: int = 0, limit: int = 50) -> List[SolicitudCliente]:
@@ -268,4 +410,5 @@ class SolicitudClienteService:
                 or [
                     "Verificar cantidades, condiciones comerciales y precios antes de guardar."
                 ],
+                ia_disponible=False,
             )
