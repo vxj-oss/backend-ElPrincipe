@@ -13,7 +13,7 @@ from app.schemas.user import UserResponse
 
 class SolicitudClienteBase(BaseModel):
     cliente_id: int
-    canal_recepcion: Optional[str] = Field(default="WhatsApp", max_length=50)
+    canal_recepcion: Optional[str] = Field(default="Presencial", max_length=50)
     observaciones: Optional[str] = None
 
 

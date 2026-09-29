@@ -41,7 +41,7 @@ class SolicitudCliente(Base):
     descripcion_auditoria: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     fecha_auditoria: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     canal_recepcion: Mapped[Optional[str]] = mapped_column(
-        String(50), default="WhatsApp", nullable=True
+        String(50), default="Presencial", nullable=True
     )
     observaciones: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(
