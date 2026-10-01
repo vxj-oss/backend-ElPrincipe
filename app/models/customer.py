@@ -16,8 +16,8 @@ class Cliente(Base):
     __tablename__ = "clientes"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    ruc_dni: Mapped[str] = mapped_column(
-        String(11), unique=True, nullable=False, index=True
+    ruc_dni: Mapped[Optional[str]] = mapped_column(
+        String(11), unique=True, nullable=True, index=True
     )
     razon_social: Mapped[str] = mapped_column(String(200), nullable=False)
     tipo_cliente: Mapped[str] = mapped_column(

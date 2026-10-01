@@ -3,6 +3,12 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
+def _vacio_a_none(v):
+    if isinstance(v, str) and not v.strip():
+        return None
+    return v
+
+
 def _validar_ruc_dni(v: Optional[str]) -> Optional[str]:
     if v is None:
         return v
@@ -15,7 +21,7 @@ def _validar_ruc_dni(v: Optional[str]) -> Optional[str]:
 
 
 class CustomerBase(BaseModel):
-    ruc_dni: str = Field(..., min_length=8, max_length=11)
+    ruc_dni: Optional[str] = Field(None, max_length=11)
     razon_social: str = Field(..., max_length=200)
     tipo_cliente: Literal["Mayorista", "Institucional", "Minorista"]
     direccion: Optional[str] = Field(None, max_length=300)
@@ -27,12 +33,14 @@ class CustomerBase(BaseModel):
 
 
 class CustomerCreate(CustomerBase):
+    _v_vacio = field_validator("ruc_dni", mode="before")(_vacio_a_none)
     _v_ruc = field_validator("ruc_dni")(_validar_ruc_dni)
 
 
 class CustomerUpdate(BaseModel):
-    ruc_dni: Optional[str] = Field(None, min_length=8, max_length=11)
+    ruc_dni: Optional[str] = Field(None, max_length=11)
 
+    _v_vacio = field_validator("ruc_dni", mode="before")(_vacio_a_none)
     _v_ruc = field_validator("ruc_dni")(_validar_ruc_dni)
     razon_social: Optional[str] = Field(None, max_length=200)
     tipo_cliente: Optional[Literal["Mayorista", "Institucional", "Minorista"]] = None

@@ -51,7 +51,7 @@ def create_customer(
     customer = CustomerService.create(db, cust_in)
     HistoryService.log(
         db, "CREAR", "Clientes", current_user.id,
-        {"entidad": customer.ruc_dni, "descripcion": f"Registró nuevo cliente {customer.razon_social} ({customer.ruc_dni})"},
+        {"entidad": customer.ruc_dni or customer.razon_social, "descripcion": f"Registró nuevo cliente {customer.razon_social}" + (f" ({customer.ruc_dni})" if customer.ruc_dni else "")},
         request.client.host if request.client else None
     )
     return customer
@@ -68,7 +68,7 @@ def update_customer(
     customer = CustomerService.update(db, customer_id, cust_in)
     HistoryService.log(
         db, "ACTUALIZAR", "Clientes", current_user.id,
-        {"entidad": customer.ruc_dni, "descripcion": f"Actualizó datos de {customer.razon_social}"},
+        {"entidad": customer.ruc_dni or customer.razon_social, "descripcion": f"Actualizó datos de {customer.razon_social}"},
         request.client.host if request.client else None
     )
     return customer
@@ -82,7 +82,7 @@ def delete_customer(
     current_user: Usuario = Depends(get_current_active_user),
 ):
     customer = CustomerService.get_by_id(db, customer_id)
-    entidad = customer.ruc_dni if customer else f"ID {customer_id}"
+    entidad = (customer.ruc_dni or customer.razon_social) if customer else f"ID {customer_id}"
     razon = customer.razon_social if customer else entidad
     resultado = CustomerService.delete(db, customer_id)
     accion_txt = "Desactivó" if resultado.get("soft_delete") else "Eliminó"
