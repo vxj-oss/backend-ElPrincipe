@@ -14,14 +14,14 @@ from app.schemas.customer_request import (
 from app.services.customer_request_service import SolicitudClienteService
 from app.services.history_service import HistoryService
 
-router = APIRouter(prefix="/customer-requests", tags=["Solicitudes de Clientes"])
+router = APIRouter(prefix="/customer-requests", tags=["Cotizaciones de Clientes"])
 
 
 @router.post(
     "/",
     response_model=SolicitudClienteResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Registrar una nueva solicitud de cliente",
+    summary="Registrar una nueva cotización de cliente",
 )
 def create_customer_request(
     payload: SolicitudClienteCreate,
@@ -37,7 +37,7 @@ def create_customer_request(
         {
             "entidad": solicitud.codigo_solicitud,
             "descripcion": (
-                f"Registró la solicitud {solicitud.codigo_solicitud} "
+                f"Registró la cotización {solicitud.codigo_solicitud} "
                 f"({len(solicitud.detalles)} ítem(s)) por canal {solicitud.canal_recepcion}"
             ),
         },
@@ -49,7 +49,7 @@ def create_customer_request(
 @router.get(
     "/",
     response_model=List[SolicitudClienteResponse],
-    summary="Listar solicitudes de cliente",
+    summary="Listar cotizaciones de cliente",
 )
 def list_customer_requests(
     skip: int = 0,
@@ -63,7 +63,7 @@ def list_customer_requests(
 @router.get(
     "/{request_id}",
     response_model=SolicitudClienteResponse,
-    summary="Obtener detalle de una solicitud",
+    summary="Obtener detalle de una cotización",
 )
 def get_customer_request_detail(
     request_id: int,
@@ -74,14 +74,14 @@ def get_customer_request_detail(
     if not req:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Solicitud de cliente no encontrada.",
+            detail="Cotización de cliente no encontrada.",
         )
     return req
 
 
 @router.delete(
     "/{request_id}",
-    summary="Eliminar una solicitud de cliente",
+    summary="Eliminar una cotización de cliente",
 )
 def delete_customer_request(
     request_id: int,
@@ -94,17 +94,17 @@ def delete_customer_request(
         db, "ELIMINAR", "Solicitudes", current_user.id,
         {
             "entidad": info["codigo_solicitud"],
-            "descripcion": f"Eliminó la solicitud {info['codigo_solicitud']} de {info['cliente_nombre']}",
+            "descripcion": f"Eliminó la cotización {info['codigo_solicitud']} de {info['cliente_nombre']}",
         },
         request.client.host if request.client else None,
     )
-    return {"message": "Solicitud eliminada correctamente."}
+    return {"message": "Cotización eliminada correctamente."}
 
 
 @router.post(
     "/validate-order",
     response_model=ComparacionPedidoResponse,
-    summary="Validar pedido contra solicitud usando IA",
+    summary="Validar pedido contra cotización usando IA",
 )
 def validate_order_against_request(
     payload: ComparacionPedidoRequest,

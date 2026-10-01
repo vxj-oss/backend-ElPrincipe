@@ -16,7 +16,7 @@ router = APIRouter(prefix="/indicators", tags=["Indicadores / KPIs"])
 @router.get(
     "/actividad-comercial",
     response_model=ActivityIndicatorSummary,
-    summary="Resumen de NSC, NPP y TPD del día actual",
+    summary="Resumen de NCCA, NPP y TPTD del día actual",
 )
 def get_actividad_comercial(
     db: Session = Depends(get_db),
@@ -28,7 +28,7 @@ def get_actividad_comercial(
 @router.get(
     "/actividad-comercial/serie",
     response_model=List[DiaPoint],
-    summary="Serie histórica por día (NSC, NPP, TPD)",
+    summary="Serie histórica por día (NCCA, NPP, TPTD)",
 )
 def get_actividad_comercial_serie(
     dias: int = 15,

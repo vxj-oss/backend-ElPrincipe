@@ -458,16 +458,16 @@ class ReportService:
         from app.services.activity_indicator_service import ActivityIndicatorService
 
         campo_por_sigla = {
-            "NSC": "solicitudes",
+            "NCCA": "solicitudes",
             "NPP": "pedidos",
-            "TPD": "tiempo_promedio_decision_minutos",
+            "TPTD": "tiempo_promedio_decision_minutos",
         }
         columna_por_sigla = {
-            "NSC": "N° Solicitudes de Clientes (SA)",
+            "NCCA": "N° Cotizaciones de Clientes Atendidas (CA)",
             "NPP": "N° Pedidos Procesados (PA)",
-            "TPD": "Tiempo Promedio de Decisión (min)",
+            "TPTD": "Tiempo Promedio de Toma de Decisión (min)",
         }
-        hoja_por_sigla = {"NSC": "NSC_por_dia", "NPP": "NPP_por_dia", "TPD": "TPD_por_dia"}
+        hoja_por_sigla = {"NCCA": "NCCA_por_dia", "NPP": "NPP_por_dia", "TPTD": "TPTD_por_dia"}
 
         campo = campo_por_sigla.get(sigla, "solicitudes")
         columna = columna_por_sigla.get(sigla, "Valor")
@@ -513,10 +513,10 @@ class ReportService:
             data.append(
                 {
                     "Ítem": i + 1,
-                    "Hora de Inicio (Apertura del registro de solicitud)": inicio.strftime("%d/%m %H:%M"),
+                    "Hora de Inicio (Apertura del registro de cotización)": inicio.strftime("%d/%m %H:%M"),
                     "Hora de Apertura (Nuevo pedido)": apertura_pedido.strftime("%d/%m %H:%M") if apertura_pedido else "—",
                     "Hora de Fin (Aprobación del pedido)": fin.strftime("%d/%m %H:%M"),
-                    "Etapa Solicitud (min)": round(min_solicitud, 2),
+                    "Etapa Cotización (min)": round(min_solicitud, 2),
                     "Etapa Pedido (min)": round(min_pedido, 2) if min_pedido is not None else "—",
                     "Tiempo de Toma de Decisión (min)": round(minutos, 2),
                 }
@@ -528,10 +528,10 @@ class ReportService:
             else [
                 {
                     "Ítem": "—",
-                    "Hora de Inicio (Apertura del registro de solicitud)": "—",
+                    "Hora de Inicio (Apertura del registro de cotización)": "—",
                     "Hora de Apertura (Nuevo pedido)": "—",
                     "Hora de Fin (Aprobación del pedido)": "—",
-                    "Etapa Solicitud (min)": "—",
+                    "Etapa Cotización (min)": "—",
                     "Etapa Pedido (min)": "—",
                     "Tiempo de Toma de Decisión (min)": "—",
                 }

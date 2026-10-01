@@ -72,7 +72,7 @@ class AgentService:
             contexto_usado = agent_result.get("contexto_utilizado")
         except Exception as e:
             logger.error(f"Error procesando la consulta del agente: {e}")
-            respuesta_texto = f"Error al procesar la solicitud con el Agente Comercial: {str(e)}"
+            respuesta_texto = f"Error al procesar la cotización con el Agente Comercial: {str(e)}"
             contexto_usado = None
 
         elapsed = round(time.time() - start_time, 2)
