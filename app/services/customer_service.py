@@ -39,7 +39,7 @@ class CustomerService:
 
     @staticmethod
     def create(db: Session, cust_in: CustomerCreate) -> Cliente:
-        if CustomerService.get_by_ruc_dni(db, cust_in.ruc_dni):
+        if cust_in.ruc_dni and CustomerService.get_by_ruc_dni(db, cust_in.ruc_dni):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Ya existe un cliente con el RUC/DNI '{cust_in.ruc_dni}'",
@@ -60,7 +60,7 @@ class CustomerService:
             )
 
         datos = cust_in.model_dump(exclude_unset=True)
-        if "ruc_dni" in datos and datos["ruc_dni"] != customer.ruc_dni:
+        if datos.get("ruc_dni") and datos["ruc_dni"] != customer.ruc_dni:
             existente = CustomerService.get_by_ruc_dni(db, datos["ruc_dni"])
             if existente:
                 raise HTTPException(
