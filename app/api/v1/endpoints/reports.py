@@ -100,7 +100,7 @@ def download_order_errors_excel(
 
 @router.get(
     "/indicators/actividad/excel",
-    summary="Descargar serie diaria de un indicador comercial (NSC/NPP/TPD) en Excel",
+    summary="Descargar serie diaria de un indicador comercial (NCCA/NPP/TPTD) en Excel",
 )
 def download_actividad_comercial_excel(
     indicador: str,

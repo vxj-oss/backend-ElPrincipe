@@ -494,7 +494,7 @@ class CommercialTools:
     def get_customer_request_by_code(db: Session, codigo: str) -> Dict[str, Any]:
         codigo = (codigo or "").strip()
         if not codigo:
-            return {"encontrado": False, "mensaje": "No se indicó ningún código de solicitud a buscar."}
+            return {"encontrado": False, "mensaje": "No se indicó ningún código de cotización a buscar."}
 
         stmt = (
             select(SolicitudCliente)
@@ -510,7 +510,7 @@ class CommercialTools:
         if not solicitud:
             return {
                 "encontrado": False,
-                "mensaje": f"No existe ninguna solicitud cuyo código coincida con '{codigo}'.",
+                "mensaje": f"No existe ninguna cotización cuyo código coincida con '{codigo}'.",
             }
 
         return {
@@ -839,7 +839,7 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "buscar_cliente_detalle",
-                "description": "Ficha completa de un cliente por razón social o RUC/DNI: contacto, condiciones pactadas y totales de pedidos/solicitudes.",
+                "description": "Ficha completa de un cliente por razón social o RUC/DNI: contacto, condiciones pactadas y totales de pedidos/cotizaciones.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -853,7 +853,7 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "listar_solicitudes_clientes",
-                "description": "Solicitudes/cotizaciones de clientes (WhatsApp u otro canal) previas a un pedido formal: producto, cantidad, precio esperado, canal y estado.",
+                "description": "Cotizaciones de clientes (WhatsApp u otro canal) previas a un pedido formal: producto, cantidad, precio esperado, canal y estado.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -868,7 +868,7 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "buscar_solicitud_por_codigo",
-                "description": "Busca una solicitud de cliente por código (parcial válido, ej: SOL-ABC12345) y devuelve su detalle.",
+                "description": "Busca una cotización de cliente por código (parcial válido, ej: COT-ABC12345) y devuelve su detalle.",
                 "parameters": {
                     "type": "object",
                     "properties": {

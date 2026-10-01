@@ -35,7 +35,7 @@ class SolicitudClienteService:
     def create_request(
         db: Session, user_id: int, payload: SolicitudClienteCreate
     ) -> SolicitudCliente:
-        codigo = f"SOL-{uuid.uuid4().hex[:8].upper()}"
+        codigo = f"COT-{uuid.uuid4().hex[:8].upper()}"
         solicitud = SolicitudCliente(
             codigo_solicitud=codigo,
             cliente_id=payload.cliente_id,
@@ -73,6 +73,60 @@ class SolicitudClienteService:
         return solicitud
 
     @staticmethod
+    def comparar_cotizacion_pedido(
+        solicitado_data: List[Dict[str, Any]], pedido_data: List[Dict[str, Any]]
+    ) -> tuple:
+        def norm(texto):
+            return (texto or "").strip().lower()
+
+        pedido_por_id: Dict[Any, int] = {}
+        pedido_por_nombre: Dict[str, int] = {}
+        for p in pedido_data:
+            pedido_por_id[p["producto_id"]] = pedido_por_id.get(p["producto_id"], 0) + p["cantidad"]
+            clave = norm(p["producto_nombre"])
+            pedido_por_nombre[clave] = pedido_por_nombre.get(clave, 0) + p["cantidad"]
+
+        reducciones: List[str] = []
+        adicionales: List[str] = []
+        ids_usados = set()
+        nombres_usados = set()
+
+        for s in solicitado_data:
+            cotizado = s["cantidad"]
+            nombre = s["producto_nombre"]
+            if s["producto_id"] is not None and s["producto_id"] in pedido_por_id:
+                registrado = pedido_por_id[s["producto_id"]]
+                ids_usados.add(s["producto_id"])
+            elif norm(nombre) in pedido_por_nombre:
+                registrado = pedido_por_nombre[norm(nombre)]
+                nombres_usados.add(norm(nombre))
+            else:
+                registrado = 0
+
+            if registrado == 0:
+                reducciones.append(f"Falta en el pedido: '{nombre}' (cotizado {cotizado}).")
+            elif registrado < cotizado:
+                reducciones.append(
+                    f"Cantidad menor a la cotizada en '{nombre}' (cotizado {cotizado}, pedido {registrado})."
+                )
+            elif registrado > cotizado:
+                adicionales.append(
+                    f"+{registrado - cotizado} unid. de '{nombre}' sobre lo cotizado ({cotizado})."
+                )
+
+        vistos = set()
+        for p in pedido_data:
+            clave = norm(p["producto_nombre"])
+            if p["producto_id"] in ids_usados or clave in nombres_usados or clave in vistos:
+                continue
+            vistos.add(clave)
+            adicionales.append(
+                f"Producto adicional: '{p['producto_nombre']}' ({pedido_por_nombre[clave]} unid.)."
+            )
+
+        return reducciones, adicionales
+
+    @staticmethod
     def resumen_auditoria_pedido(auditoria: ComparacionPedidoResponse) -> Dict[str, Any]:
         if not auditoria.ia_disponible:
             return {
@@ -80,16 +134,15 @@ class SolicitudClienteService:
                 "resultado_auditoria": "No_Disponible",
                 "descripcion_auditoria": auditoria.descripcion_discrepancia,
             }
+        base = auditoria.descripcion_discrepancia if auditoria.hay_discrepancia else "Conforme."
+        if auditoria.ventas_adicionales:
+            base = f"{base} Venta adicional: {' | '.join(auditoria.ventas_adicionales)}"
         return {
             "auditado_ia": True,
             "resultado_auditoria": (
                 "Con_Observaciones" if auditoria.hay_discrepancia else "Conforme"
             ),
-            "descripcion_auditoria": (
-                auditoria.descripcion_discrepancia
-                if auditoria.hay_discrepancia
-                else "Conforme."
-            ),
+            "descripcion_auditoria": base,
         }
 
     @staticmethod
@@ -143,12 +196,12 @@ class SolicitudClienteService:
         )
         if repetida:
             observaciones.append(
-                "El cliente tiene otra solicitud pendiente registrada en las últimas 24 horas."
+                "El cliente tiene otra cotización pendiente registrada en las últimas 24 horas."
             )
 
         system_prompt = (
-            "Eres el Auditor de Solicitudes de Distribuidora EL PRÍNCIPE. "
-            "Revisas si una solicitud de cliente está bien registrada antes de convertirse en pedido. "
+            "Eres el Auditor de Cotizaciones de Distribuidora EL PRÍNCIPE. "
+            "Revisas si una cotización de cliente está bien registrada antes de convertirse en pedido. "
             "Considera coherencia de productos, cantidades, precios esperados y observaciones del cliente. "
             "Las alertas automáticas ya calculadas son confiables; no las contradigas. "
             "Responde estrictamente en JSON: "
@@ -176,7 +229,7 @@ class SolicitudClienteService:
                 "descripcion_auditoria": (
                     " | ".join(observaciones)
                     if observaciones
-                    else "El asistente de IA no estuvo disponible para auditar la solicitud."
+                    else "El asistente de IA no estuvo disponible para auditar la cotización."
                 ),
             }
 
@@ -211,7 +264,7 @@ class SolicitudClienteService:
         if not solicitud:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Solicitud de cliente no encontrada.",
+                detail="Cotización de cliente no encontrada.",
             )
         codigo = solicitud.codigo_solicitud
         cliente_nombre = (
@@ -310,6 +363,10 @@ class SolicitudClienteService:
             for it in payload.items_pedido
         ]
 
+        reducciones, ventas_adicionales = SolicitudClienteService.comparar_cotizacion_pedido(
+            solicitado_data, pedido_data
+        )
+
         discrepancias_locales = []
         for it in payload.items_pedido:
             prod = db.scalar(select(Producto).where(Producto.id == it.producto_id))
@@ -339,7 +396,7 @@ class SolicitudClienteService:
                 descripcion_discrepancia=(
                     " | ".join(todas_discrepancias) if hay_error else "Conforme."
                 ),
-                analisis_ia="Auditoría directa completada sin solicitud previa vinculada.",
+                analisis_ia="Auditoría directa completada sin cotización previa vinculada.",
                 sugerencias_correccion=todas_sugerencias,
             )
 
@@ -349,7 +406,9 @@ class SolicitudClienteService:
             "REGLAS OBLIGATORIAS:\n"
             "1. SKU: Si el campo 'sku' es null o está vacío, NO es un error (ignóralo si el producto coincide por nombre o ID). Solo marca 'SKU_Incorrecto' si se registró un producto completamente diferente al solicitado.\n"
             "2. FORMA DE PAGO: Cualquier discrepancia en la condición comercial frente a la política ya ha sido evaluada preliminarmente; mantén 'Condicion_Comercial' si se reportan alertas de ese tipo.\n"
-            "3. Enfócate en discrepancias reales: Condicion_Comercial, SKU_Incorrecto, Cantidad_Erronea, Precio_Desactualizado o Stock_Insuficiente.\n"
+            "3. Enfócate en discrepancias reales: Condicion_Comercial, Cantidad_Erronea, Precio_Desactualizado o Stock_Insuficiente.\n"
+            "4. Si el cliente compra MÁS de lo cotizado o agrega productos adicionales, es una VENTA ADICIONAL beneficiosa: NO es discrepancia ni error, no la reportes como tal.\n"
+            "5. Comprar MENOS de lo cotizado, o no incluir un producto cotizado, SÍ es discrepancia (Cantidad_Erronea).\n"
             "Responde estrictamente en formato JSON con la siguiente estructura: "
             '{"hay_discrepancia": bool, "tipo_error": str, "descripcion_discrepancia": str, "analisis_ia": str, "sugerencias_correccion": [str]}'
         )
@@ -358,9 +417,11 @@ class SolicitudClienteService:
             f"=== POLÍTICA Y CONDICIONES COMERCIALES ===\n"
             f"Forma de Pago en Pedido: {forma_pago}\n"
             f"Alertas Comerciales: {json.dumps(discrepancias_condicion, ensure_ascii=False)}\n\n"
-            f"=== LO QUE PIDIÓ EL CLIENTE EN SU SOLICITUD ===\n{json.dumps(solicitado_data, ensure_ascii=False, indent=2)}\n\n"
+            f"=== LO QUE PIDIÓ EL CLIENTE EN SU COTIZACIÓN ===\n{json.dumps(solicitado_data, ensure_ascii=False, indent=2)}\n\n"
             f"=== LO QUE VA A REGISTRAR EN EL PEDIDO ===\n{json.dumps(pedido_data, ensure_ascii=False, indent=2)}\n\n"
             f"=== ALERTAS PREVIAS DE STOCK ===\n{json.dumps(discrepancias_locales, ensure_ascii=False, indent=2)}\n\n"
+            f"=== CANTIDADES MENORES A LO COTIZADO (discrepancia) ===\n{json.dumps(reducciones, ensure_ascii=False)}\n\n"
+            f"=== VENTAS ADICIONALES (NO son error) ===\n{json.dumps(ventas_adicionales, ensure_ascii=False)}\n\n"
             "Analiza todo integralmente y genera el informe de discrepancias."
         )
 
@@ -380,21 +441,40 @@ class SolicitudClienteService:
                 resultado.descripcion_discrepancia = " | ".join(discrepancias_condicion)
                 resultado.sugerencias_correccion.extend(sugerencias_condicion)
 
+            if reducciones and not resultado.hay_discrepancia:
+                resultado.hay_discrepancia = True
+                resultado.tipo_error = "Cantidad_Erronea"
+                resultado.descripcion_discrepancia = " | ".join(reducciones)
+
+            solo_aumentos = (
+                resultado.hay_discrepancia
+                and ventas_adicionales
+                and not reducciones
+                and not discrepancias_condicion
+                and not discrepancias_locales
+                and resultado.tipo_error in ("Cantidad_Erronea", "SKU_Incorrecto")
+            )
+            if solo_aumentos:
+                resultado.hay_discrepancia = False
+                resultado.tipo_error = None
+                resultado.descripcion_discrepancia = "Conforme."
+                resultado.sugerencias_correccion = []
+
+            resultado.ventas_adicionales = ventas_adicionales
             return resultado
         except Exception:
-            todas_discrepancias = discrepancias_condicion + discrepancias_locales
-            hay_error = len(todas_discrepancias) > 0 or len(solicitado_data) != len(
-                pedido_data
-            )
+            todas_discrepancias = discrepancias_condicion + discrepancias_locales + reducciones
+            hay_error = len(todas_discrepancias) > 0
             return ComparacionPedidoResponse(
                 hay_discrepancia=hay_error,
+                ventas_adicionales=ventas_adicionales,
                 tipo_error=(
                     "Condicion_Comercial"
                     if discrepancias_condicion
                     else (
                         "Stock_Insuficiente"
                         if discrepancias_locales
-                        else "Discrepancia_Detectada"
+                        else ("Cantidad_Erronea" if reducciones else None)
                     )
                 ),
                 descripcion_discrepancia=(

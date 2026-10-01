@@ -63,3 +63,4 @@ class ComparacionPedidoResponse(BaseModel):
     analisis_ia: str
     sugerencias_correccion: List[str] = []
     ia_disponible: bool = True
+    ventas_adicionales: List[str] = []

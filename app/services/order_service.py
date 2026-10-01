@@ -275,13 +275,13 @@ class OrderService:
         if not order_in.solicitud_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Para crear un pedido debe vincularlo a una solicitud de cliente.",
+                detail="Para crear un pedido debe vincularlo a una cotización de cliente.",
             )
         solicitud = SolicitudClienteService.get_by_id(db, order_in.solicitud_id)
         if not solicitud:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Solicitud de cliente no encontrada",
+                detail="Cotización de cliente no encontrada",
             )
 
         auditoria_ia = None
@@ -380,14 +380,10 @@ class OrderService:
                 item_tiene_error = True
                 item_tipo_error = "Stock_Insuficiente"
                 item_desc_error = f"Stock insuficiente en almacén (Disponible: {prod.stock_actual}, Pedido: {item.cantidad})."
-            elif bool(cantidades_solicitadas or cantidades_solicitadas_por_nombre) and esperado is None:
-                item_tiene_error = True
-                item_tipo_error = "SKU_Incorrecto"
-                item_desc_error = f"Producto no solicitado: '{prod.nombre}' no figuraba en la solicitud original."
-            elif esperado is not None and item.cantidad != esperado:
+            elif esperado is not None and item.cantidad < esperado:
                 item_tiene_error = True
                 item_tipo_error = "Cantidad_Erronea"
-                item_desc_error = f"Cantidad difiere de la solicitud (Solicitado: {esperado}, Registrado: {item.cantidad})."
+                item_desc_error = f"Cantidad menor a la cotizada (Cotizado: {esperado}, Registrado: {item.cantidad})."
             elif desfase_precio:
                 item_tiene_error = True
                 item_tipo_error = "Precio_Desactualizado"
@@ -551,14 +547,10 @@ class OrderService:
                     item_tiene_error = True
                     item_tipo_error = "Stock_Insuficiente"
                     item_desc_error = f"Stock insuficiente en almacén (Disponible: {prod.stock_actual}, Pedido: {item.cantidad})."
-                elif tiene_referencia_solicitud and esperado is None:
-                    item_tiene_error = True
-                    item_tipo_error = "SKU_Incorrecto"
-                    item_desc_error = f"Producto no solicitado: '{prod.nombre}' no figuraba en la solicitud original."
-                elif esperado is not None and item.cantidad != esperado:
+                elif esperado is not None and item.cantidad < esperado:
                     item_tiene_error = True
                     item_tipo_error = "Cantidad_Erronea"
-                    item_desc_error = f"Cantidad difiere de la solicitud (Solicitado: {esperado}, Registrado: {item.cantidad})."
+                    item_desc_error = f"Cantidad menor a la cotizada (Cotizado: {esperado}, Registrado: {item.cantidad})."
                 elif desfase_precio:
                     item_tiene_error = True
                     item_tipo_error = "Precio_Desactualizado"

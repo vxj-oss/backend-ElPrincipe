@@ -106,7 +106,7 @@ class CustomerService:
             db.commit()
             return {
                 "message": (
-                    "El cliente tiene pedidos o solicitudes registradas, por lo que se "
+                    "El cliente tiene pedidos o cotizaciones registradas, por lo que se "
                     "marcó como inactivo en lugar de eliminarlo."
                 ),
                 "soft_delete": True,
