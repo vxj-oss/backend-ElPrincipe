@@ -17,7 +17,7 @@ def list_customers(
     estado: Optional[str] = None,
     search: Optional[str] = None,
     skip: int = 0,
-    limit: int = 100,
+    limit: int = 1000,
     db: Session = Depends(get_db),
     _: Usuario = Depends(get_current_active_user),
 ):
