@@ -14,7 +14,7 @@ router = APIRouter(prefix="/decisions", tags=["Decisiones Comerciales"])
 @router.get("/", response_model=List[DecisionResponse], summary="Listar decisiones comerciales registradas")
 def list_decisions(
     skip: int = 0,
-    limit: int = 100,
+    limit: int = 1000,
     db: Session = Depends(get_db),
     _: Usuario = Depends(get_current_active_user),
 ):
