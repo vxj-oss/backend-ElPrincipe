@@ -454,7 +454,7 @@ class ReportService:
         return output
 
     @staticmethod
-    def generate_actividad_comercial_excel(db: Session, sigla: str, dias: int = 15) -> io.BytesIO:
+    def generate_actividad_comercial_excel(db: Session, sigla: str, dias: Optional[int] = None) -> io.BytesIO:
         from app.services.activity_indicator_service import ActivityIndicatorService
 
         campo_por_sigla = {

@@ -104,7 +104,7 @@ def download_order_errors_excel(
 )
 def download_actividad_comercial_excel(
     indicador: str,
-    dias: int = 15,
+    dias: Optional[int] = None,
     db: Session = Depends(get_db),
     _: Usuario = Depends(get_current_active_user),
 ):

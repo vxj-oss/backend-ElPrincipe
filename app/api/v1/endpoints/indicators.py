@@ -1,4 +1,4 @@
-﻿from typing import List
+﻿from typing import List, Optional
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
@@ -31,7 +31,7 @@ def get_actividad_comercial(
     summary="Serie histórica por día (NCCA, NPP, TPTD)",
 )
 def get_actividad_comercial_serie(
-    dias: int = 15,
+    dias: Optional[int] = None,
     db: Session = Depends(get_db),
     _: Usuario = Depends(get_current_active_user),
 ):

@@ -31,7 +31,6 @@ class ActivityIndicatorService:
         stmt = select(func.count(SolicitudCliente.id)).where(
             SolicitudCliente.fecha_solicitud >= inicio,
             SolicitudCliente.fecha_solicitud < fin,
-            SolicitudCliente.estado == "Atendida",
             SolicitudCliente.auditado_ia.is_(True),
         )
         if resultado:
@@ -130,9 +129,28 @@ class ActivityIndicatorService:
         }
 
     @staticmethod
-    def get_serie_dias(db: Session, cantidad_dias: int = 15) -> List[dict]:
+    def get_serie_dias(db: Session, cantidad_dias: Optional[int] = None) -> List[dict]:
         ahora = ahora_lima()
         inicio, fin, etiqueta = ActivityIndicatorService._rango_dia_para(ahora)
+
+        if cantidad_dias is None:
+            primera_solicitud = db.scalar(
+                select(func.min(SolicitudCliente.fecha_solicitud)).where(
+                    SolicitudCliente.auditado_ia.is_(True),
+                )
+            )
+            primer_pedido = db.scalar(
+                select(func.min(Pedido.fecha_aprobacion)).where(
+                    Pedido.estado.in_(("Aprobado", "Entregado")),
+                    Pedido.auditado_ia.is_(True),
+                )
+            )
+            fechas = [f for f in (primera_solicitud, primer_pedido) if f is not None]
+            if fechas:
+                primer_dia = min(fechas).astimezone(LIMA_TZ).date()
+                cantidad_dias = (ahora.astimezone(LIMA_TZ).date() - primer_dia).days + 1
+            else:
+                cantidad_dias = 1
 
         dias = []
         for _ in range(cantidad_dias):
