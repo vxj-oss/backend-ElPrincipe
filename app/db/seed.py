@@ -217,7 +217,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--admin-only",
         action="store_true",
-        help="Crea solo el usuario administrador, sin datos de demo (para producción).",
+        help="Crea solo el usuario administrador, sin datos iniciales adicionales (para producción).",
     )
     args = parser.parse_args()
 
