@@ -78,6 +78,20 @@ class ActivityIndicatorService:
         return (Decimal(str(segundos)) / Decimal(60)).quantize(Decimal("0.01"))
 
     @staticmethod
+    def _contar_pedidos_con_decision(db: Session, inicio: datetime, fin: datetime) -> int:
+        stmt = (
+            select(func.count(Pedido.id))
+            .select_from(Pedido)
+            .join(SolicitudCliente, SolicitudCliente.id == Pedido.solicitud_id)
+            .where(
+                Pedido.fecha_aprobacion.isnot(None),
+                Pedido.fecha_aprobacion >= inicio,
+                Pedido.fecha_aprobacion < fin,
+            )
+        )
+        return db.scalar(stmt) or 0
+
+    @staticmethod
     def _variacion_pct(actual: int, anterior: int) -> Decimal:
         if anterior == 0:
             return Decimal("100.00") if actual > 0 else Decimal("0.00")
@@ -126,6 +140,9 @@ class ActivityIndicatorService:
             ),
             "tiempo_promedio_decision_minutos": tpd_dia_actual,
             "tiempo_promedio_decision_minutos_general": tpd_general,
+            "pedidos_con_decision_dia_actual": ActivityIndicatorService._contar_pedidos_con_decision(
+                db, inicio_actual, fin_actual
+            ),
         }
 
     @staticmethod
@@ -163,6 +180,9 @@ class ActivityIndicatorService:
                     "solicitudes": solicitudes,
                     "pedidos": pedidos,
                     "tiempo_promedio_decision_minutos": float(tpd) if tpd is not None else None,
+                    "pedidos_con_decision": ActivityIndicatorService._contar_pedidos_con_decision(
+                        db, inicio, fin
+                    ),
                 }
             )
             inicio, fin, etiqueta = ActivityIndicatorService._dia_anterior_de(inicio)

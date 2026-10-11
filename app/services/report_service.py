@@ -473,6 +473,10 @@ class ReportService:
         columna = columna_por_sigla.get(sigla, "Valor")
 
         serie = ActivityIndicatorService.get_serie_dias(db, cantidad_dias=dias)
+
+        if sigla == "TPTD":
+            return ReportService._tptd_por_dia_excel(serie)
+
         data = [
             {
                 "N° Registro": f"Día {i + 1}",
@@ -488,6 +492,64 @@ class ReportService:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name=hoja_por_sigla.get(sigla, "Indicador"))
+        output.seek(0)
+        return output
+
+    @staticmethod
+    def _tptd_por_dia_excel(serie: list) -> io.BytesIO:
+        def min_seg(minutos: float) -> str:
+            total = round(minutos * 60)
+            return f"{total // 60} min {total % 60:02d} s"
+
+        col_dia = "Día"
+        col_fecha = "Fecha"
+        col_n = "N° de pedidos aprobados"
+        col_min = "Tiempo promedio de decisión (minutos)"
+        col_ms = "Equivale a (minutos y segundos)"
+
+        data = []
+        suma_ponderada = 0.0
+        total_pedidos = 0
+        for i, punto in enumerate(serie):
+            valor = punto["tiempo_promedio_decision_minutos"]
+            n = punto.get("pedidos_con_decision", 0)
+            if valor is not None:
+                suma_ponderada += valor * n
+                total_pedidos += n
+            data.append(
+                {
+                    col_dia: i + 1,
+                    col_fecha: punto["label"],
+                    col_n: n,
+                    col_min: round(valor, 2) if valor is not None else "Sin pedidos",
+                    col_ms: min_seg(valor) if valor is not None else "Sin pedidos",
+                }
+            )
+
+        if total_pedidos:
+            promedio = suma_ponderada / total_pedidos
+            data.append(
+                {
+                    col_dia: "TOTAL",
+                    col_fecha: "Todos los días",
+                    col_n: total_pedidos,
+                    col_min: round(promedio, 2),
+                    col_ms: min_seg(promedio),
+                }
+            )
+
+        df = pd.DataFrame(
+            data
+            if data
+            else [{col_dia: "—", col_fecha: "—", col_n: "—", col_min: "—", col_ms: "—"}]
+        )
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="TPTD_por_dia")
+            hoja = writer.sheets["TPTD_por_dia"]
+            for col, ancho in zip("ABCDE", (8, 16, 24, 38, 32)):
+                hoja.column_dimensions[col].width = ancho
         output.seek(0)
         return output
 
