@@ -4,7 +4,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from openpyxl.chart import BarChart, PieChart, Reference
-from openpyxl.styles import Font
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -475,7 +476,7 @@ class ReportService:
         serie = ActivityIndicatorService.get_serie_dias(db, cantidad_dias=dias)
 
         if sigla == "TPTD":
-            return ReportService._tptd_por_dia_excel(serie)
+            return ReportService._tptd_por_dia_excel(db, serie)
 
         data = [
             {
@@ -496,18 +497,63 @@ class ReportService:
         return output
 
     @staticmethod
-    def _tptd_por_dia_excel(serie: list) -> io.BytesIO:
-        def min_seg(minutos: float) -> str:
-            total = round(minutos * 60)
-            return f"{total // 60} min {total % 60:02d} s"
+    def _tptd_por_dia_excel(db: Session, serie: list) -> io.BytesIO:
+        verde = PatternFill("solid", fgColor="E2EFDA")
+        lado = Side(style="thin", color="000000")
+        borde = Border(left=lado, right=lado, top=lado, bottom=lado)
+        centro = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        izquierda = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
-        col_dia = "Día"
-        col_fecha = "Fecha"
-        col_n = "N° de pedidos aprobados"
-        col_min = "Tiempo promedio de decisión (minutos)"
-        col_ms = "Equivale a (minutos y segundos)"
+        wb = Workbook()
+        hoja = wb.active
+        hoja.title = "Ficha_TPTD"
+        for col, ancho in zip("ABCDE", (16, 16, 16, 16, 26)):
+            hoja.column_dimensions[col].width = ancho
 
-        data = []
+        def celda(ref, valor, relleno=None, negrita=False, alineacion=centro):
+            c = hoja[ref]
+            c.value = valor
+            c.font = Font(bold=negrita)
+            c.alignment = alineacion
+            if relleno:
+                c.fill = relleno
+            return c
+
+        def combinar(rango, valor, relleno=None, negrita=False, alineacion=centro):
+            hoja.merge_cells(rango)
+            celda(rango.split(":")[0], valor, relleno, negrita, alineacion)
+            for fila in hoja[rango]:
+                for c in fila:
+                    c.border = borde
+                    if relleno:
+                        c.fill = relleno
+
+        combinar("A1:E1", "FICHA DE OBSERVACIÓN", verde, True)
+        combinar("A2:B2", "Indicador", verde, True)
+        combinar("C2:E2", "Tiempo promedio de toma de decisiones", None, False, izquierda)
+        combinar("A3:B3", "Investigador", verde, True)
+        combinar("C3:E3", "Victor Jesus Nontol Nureña", None, False, izquierda)
+        combinar("A4:B4", "Empresa", verde, True)
+        combinar("C4:E4", "Productos El Príncipe", None, False, izquierda)
+
+        celda("A5", "Variable", verde, True)
+        celda("B5", "Medida", verde, True)
+        combinar("C5:E5", "Fórmula del indicador", verde, True)
+        celda("A6", "Toma de decisiones")
+        celda("B6", "Minutos")
+        combinar(
+            "C6:E6",
+            "TPTD = Σ (Hora de fin − Hora de inicio) / N.° de decisiones tomadas",
+        )
+        hoja.row_dimensions[6].height = 34
+
+        for col, titulo in zip(
+            "ABCDE", ("Ítem", "Fecha", "Hora de Inicio", "Hora de Fin", "Tiempo de toma de decisión")
+        ):
+            celda(f"{col}7", titulo, verde, True)
+        hoja.row_dimensions[7].height = 32
+
+        fila = 8
         suma_ponderada = 0.0
         total_pedidos = 0
         for i, punto in enumerate(serie):
@@ -516,42 +562,81 @@ class ReportService:
             if valor is not None:
                 suma_ponderada += valor * n
                 total_pedidos += n
-            data.append(
-                {
-                    col_dia: i + 1,
-                    col_fecha: punto["label"],
-                    col_n: n,
-                    col_min: round(valor, 2) if valor is not None else "Sin pedidos",
-                    col_ms: min_seg(valor) if valor is not None else "Sin pedidos",
-                }
-            )
+            celda(f"A{fila}", i + 1, negrita=True)
+            celda(f"B{fila}", punto.get("fecha_completa") or punto["label"], negrita=True)
+            celda(f"C{fila}", punto.get("hora_inicio_decision") or "—")
+            celda(f"D{fila}", punto.get("hora_fin_decision") or "—")
+            tiempo = celda(f"E{fila}", round(valor, 2) if valor is not None else "Sin pedidos")
+            if valor is not None:
+                tiempo.number_format = "0.00"
+            fila += 1
 
         if total_pedidos:
-            promedio = suma_ponderada / total_pedidos
-            data.append(
-                {
-                    col_dia: "TOTAL",
-                    col_fecha: "Todos los días",
-                    col_n: total_pedidos,
-                    col_min: round(promedio, 2),
-                    col_ms: min_seg(promedio),
-                }
+            combinar(
+                f"A{fila}:D{fila}",
+                f"TPTD = Σ / N  (N = {total_pedidos} decisiones tomadas)",
+                verde,
+                True,
             )
+            total = celda(f"E{fila}", round(suma_ponderada / total_pedidos, 2), verde, True)
+            total.number_format = "0.00"
+            fila += 1
 
-        df = pd.DataFrame(
-            data
-            if data
-            else [{col_dia: "—", col_fecha: "—", col_n: "—", col_min: "—", col_ms: "—"}]
-        )
+        for fila_celdas in hoja[f"A1:E{fila - 1}"]:
+            for c in fila_celdas:
+                c.border = borde
+
+        ReportService._hoja_detalle_tptd(db, wb, serie, verde, borde, centro)
 
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="TPTD_por_dia")
-            hoja = writer.sheets["TPTD_por_dia"]
-            for col, ancho in zip("ABCDE", (8, 16, 24, 38, 32)):
-                hoja.column_dimensions[col].width = ancho
+        wb.save(output)
         output.seek(0)
         return output
+
+    @staticmethod
+    def _hoja_detalle_tptd(db: Session, wb, serie: list, verde, borde, centro) -> None:
+        hoja = wb.create_sheet("Detalle_por_pedido")
+        for col, ancho in zip("ABCDE", (8, 16, 22, 22, 26)):
+            hoja.column_dimensions[col].width = ancho
+
+        titulos = ("Ítem", "Fecha", "Hora de Inicio", "Hora de Fin", "Tiempo de toma de decisión (min)")
+        for col, titulo in zip("ABCDE", titulos):
+            c = hoja[f"{col}1"]
+            c.value = titulo
+            c.font = Font(bold=True)
+            c.fill = verde
+            c.alignment = centro
+            c.border = borde
+        hoja.row_dimensions[1].height = 32
+
+        filas = []
+        if serie and serie[0].get("fecha_completa"):
+            primer_dia = datetime.strptime(serie[0]["fecha_completa"], "%d/%m/%Y").replace(tzinfo=LIMA_TZ)
+            stmt = (
+                select(Pedido.fecha_aprobacion, SolicitudCliente.hora_apertura_modal, SolicitudCliente.fecha_solicitud)
+                .join(SolicitudCliente, SolicitudCliente.id == Pedido.solicitud_id)
+                .where(Pedido.fecha_aprobacion.isnot(None), Pedido.fecha_aprobacion >= primer_dia)
+                .order_by(Pedido.fecha_aprobacion.asc())
+            )
+            filas = db.execute(stmt).all()
+
+        for i, (aprobacion, apertura, fecha_solicitud) in enumerate(filas):
+            fin = aprobacion.astimezone(LIMA_TZ)
+            inicio = (apertura or fecha_solicitud).astimezone(LIMA_TZ)
+            minutos = round((fin - inicio).total_seconds() / 60, 2)
+            valores = (
+                i + 1,
+                fin.strftime("%d/%m/%Y"),
+                inicio.strftime("%d/%m/%Y %H:%M:%S"),
+                fin.strftime("%d/%m/%Y %H:%M:%S"),
+                minutos,
+            )
+            for col, valor in zip("ABCDE", valores):
+                c = hoja[f"{col}{i + 2}"]
+                c.value = valor
+                c.alignment = centro
+                c.border = borde
+            hoja[f"E{i + 2}"].number_format = "0.00"
 
     @staticmethod
     def generate_tpd_por_pedido_excel(db: Session) -> io.BytesIO:

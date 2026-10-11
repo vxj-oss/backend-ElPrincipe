@@ -92,6 +92,26 @@ class ActivityIndicatorService:
         return db.scalar(stmt) or 0
 
     @staticmethod
+    def _horas_decision(
+        db: Session, inicio: datetime, fin: datetime
+    ) -> Tuple[Optional[datetime], Optional[datetime]]:
+        inicio_decision = func.coalesce(
+            SolicitudCliente.hora_apertura_modal, SolicitudCliente.fecha_solicitud
+        )
+        stmt = (
+            select(func.min(inicio_decision), func.max(Pedido.fecha_aprobacion))
+            .select_from(Pedido)
+            .join(SolicitudCliente, SolicitudCliente.id == Pedido.solicitud_id)
+            .where(
+                Pedido.fecha_aprobacion.isnot(None),
+                Pedido.fecha_aprobacion >= inicio,
+                Pedido.fecha_aprobacion < fin,
+            )
+        )
+        primera_apertura, ultima_aprobacion = db.execute(stmt).one()
+        return primera_apertura, ultima_aprobacion
+
+    @staticmethod
     def _variacion_pct(actual: int, anterior: int) -> Decimal:
         if anterior == 0:
             return Decimal("100.00") if actual > 0 else Decimal("0.00")
@@ -174,9 +194,23 @@ class ActivityIndicatorService:
             solicitudes = ActivityIndicatorService._contar_solicitudes(db, inicio, fin)
             pedidos = ActivityIndicatorService._contar_pedidos(db, inicio, fin)
             tpd = ActivityIndicatorService._tiempo_promedio_decision_minutos(db, inicio, fin)
+            primera_apertura, ultima_aprobacion = ActivityIndicatorService._horas_decision(
+                db, inicio, fin
+            )
             dias.append(
                 {
                     "label": etiqueta,
+                    "fecha_completa": inicio.astimezone(LIMA_TZ).strftime("%d/%m/%Y"),
+                    "hora_inicio_decision": (
+                        primera_apertura.astimezone(LIMA_TZ).strftime("%H:%M:%S")
+                        if primera_apertura
+                        else None
+                    ),
+                    "hora_fin_decision": (
+                        ultima_aprobacion.astimezone(LIMA_TZ).strftime("%H:%M:%S")
+                        if ultima_aprobacion
+                        else None
+                    ),
                     "solicitudes": solicitudes,
                     "pedidos": pedidos,
                     "tiempo_promedio_decision_minutos": float(tpd) if tpd is not None else None,

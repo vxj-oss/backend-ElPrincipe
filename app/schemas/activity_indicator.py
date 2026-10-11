@@ -28,3 +28,6 @@ class DiaPoint(BaseModel):
     pedidos: int
     tiempo_promedio_decision_minutos: Optional[float] = None
     pedidos_con_decision: int = 0
+    fecha_completa: Optional[str] = None
+    hora_inicio_decision: Optional[str] = None
+    hora_fin_decision: Optional[str] = None
