@@ -55,6 +55,15 @@ class ActivityIndicatorService:
     def _tiempo_promedio_decision_minutos(
         db: Session, inicio: Optional[datetime] = None, fin: Optional[datetime] = None
     ) -> Optional[Decimal]:
+        segundos = ActivityIndicatorService._tiempo_promedio_decision_segundos(db, inicio, fin)
+        if segundos is None:
+            return None
+        return (segundos / Decimal(60)).quantize(Decimal("0.01"))
+
+    @staticmethod
+    def _tiempo_promedio_decision_segundos(
+        db: Session, inicio: Optional[datetime] = None, fin: Optional[datetime] = None
+    ) -> Optional[Decimal]:
         inicio_decision = func.coalesce(
             SolicitudCliente.hora_apertura_modal, SolicitudCliente.fecha_solicitud
         )
@@ -75,7 +84,7 @@ class ActivityIndicatorService:
         segundos = db.scalar(stmt)
         if segundos is None:
             return None
-        return (Decimal(str(segundos)) / Decimal(60)).quantize(Decimal("0.01"))
+        return Decimal(str(segundos))
 
     @staticmethod
     def _contar_pedidos_con_decision(db: Session, inicio: datetime, fin: datetime) -> int:
@@ -134,6 +143,10 @@ class ActivityIndicatorService:
             db, inicio_actual, fin_actual
         )
         tpd_general = ActivityIndicatorService._tiempo_promedio_decision_minutos(db)
+        tpd_dia_actual_seg = ActivityIndicatorService._tiempo_promedio_decision_segundos(
+            db, inicio_actual, fin_actual
+        )
+        tpd_general_seg = ActivityIndicatorService._tiempo_promedio_decision_segundos(db)
 
         return {
             "dia_actual": etiqueta_actual,
@@ -160,6 +173,12 @@ class ActivityIndicatorService:
             ),
             "tiempo_promedio_decision_minutos": tpd_dia_actual,
             "tiempo_promedio_decision_minutos_general": tpd_general,
+            "tiempo_promedio_decision_segundos": (
+                tpd_dia_actual_seg.quantize(Decimal("0.01")) if tpd_dia_actual_seg is not None else None
+            ),
+            "tiempo_promedio_decision_segundos_general": (
+                tpd_general_seg.quantize(Decimal("0.01")) if tpd_general_seg is not None else None
+            ),
             "pedidos_con_decision_dia_actual": ActivityIndicatorService._contar_pedidos_con_decision(
                 db, inicio_actual, fin_actual
             ),
@@ -194,6 +213,7 @@ class ActivityIndicatorService:
             solicitudes = ActivityIndicatorService._contar_solicitudes(db, inicio, fin)
             pedidos = ActivityIndicatorService._contar_pedidos(db, inicio, fin)
             tpd = ActivityIndicatorService._tiempo_promedio_decision_minutos(db, inicio, fin)
+            tpd_segundos = ActivityIndicatorService._tiempo_promedio_decision_segundos(db, inicio, fin)
             primera_apertura, ultima_aprobacion = ActivityIndicatorService._horas_decision(
                 db, inicio, fin
             )
@@ -214,6 +234,9 @@ class ActivityIndicatorService:
                     "solicitudes": solicitudes,
                     "pedidos": pedidos,
                     "tiempo_promedio_decision_minutos": float(tpd) if tpd is not None else None,
+                    "tiempo_promedio_decision_segundos": (
+                        float(tpd_segundos) if tpd_segundos is not None else None
+                    ),
                     "pedidos_con_decision": ActivityIndicatorService._contar_pedidos_con_decision(
                         db, inicio, fin
                     ),
