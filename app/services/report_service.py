@@ -540,7 +540,7 @@ class ReportService:
         celda("B5", "Medida", verde, True)
         combinar("C5:E5", "Fórmula del indicador", verde, True)
         celda("A6", "Toma de decisiones")
-        celda("B6", "Minutos")
+        celda("B6", "Segundos")
         combinar(
             "C6:E6",
             "TPTD = Σ (Hora de fin − Hora de inicio) / N.° de decisiones tomadas",
@@ -557,7 +557,7 @@ class ReportService:
         suma_ponderada = 0.0
         total_pedidos = 0
         for i, punto in enumerate(serie):
-            valor = punto["tiempo_promedio_decision_minutos"]
+            valor = punto["tiempo_promedio_decision_segundos"]
             n = punto.get("pedidos_con_decision", 0)
             if valor is not None:
                 suma_ponderada += valor * n
@@ -566,9 +566,7 @@ class ReportService:
             celda(f"B{fila}", punto.get("fecha_completa") or punto["label"], negrita=True)
             celda(f"C{fila}", punto.get("hora_inicio_decision") or "—")
             celda(f"D{fila}", punto.get("hora_fin_decision") or "—")
-            tiempo = celda(f"E{fila}", round(valor, 2) if valor is not None else "Sin pedidos")
-            if valor is not None:
-                tiempo.number_format = "0.00"
+            celda(f"E{fila}", round(valor) if valor is not None else "Sin pedidos")
             fila += 1
 
         if total_pedidos:
@@ -578,8 +576,7 @@ class ReportService:
                 verde,
                 True,
             )
-            total = celda(f"E{fila}", round(suma_ponderada / total_pedidos, 2), verde, True)
-            total.number_format = "0.00"
+            celda(f"E{fila}", round(suma_ponderada / total_pedidos), verde, True)
             fila += 1
 
         for fila_celdas in hoja[f"A1:E{fila - 1}"]:
@@ -599,7 +596,7 @@ class ReportService:
         for col, ancho in zip("ABCDE", (8, 16, 22, 22, 26)):
             hoja.column_dimensions[col].width = ancho
 
-        titulos = ("Ítem", "Fecha", "Hora de Inicio", "Hora de Fin", "Tiempo de toma de decisión (min)")
+        titulos = ("Ítem", "Fecha", "Hora de Inicio", "Hora de Fin", "Tiempo de toma de decisión (seg)")
         for col, titulo in zip("ABCDE", titulos):
             c = hoja[f"{col}1"]
             c.value = titulo
@@ -623,20 +620,19 @@ class ReportService:
         for i, (aprobacion, apertura, fecha_solicitud) in enumerate(filas):
             fin = aprobacion.astimezone(LIMA_TZ)
             inicio = (apertura or fecha_solicitud).astimezone(LIMA_TZ)
-            minutos = round((fin - inicio).total_seconds() / 60, 2)
+            segundos = round((fin - inicio).total_seconds())
             valores = (
                 i + 1,
                 fin.strftime("%d/%m/%Y"),
                 inicio.strftime("%d/%m/%Y %H:%M:%S"),
                 fin.strftime("%d/%m/%Y %H:%M:%S"),
-                minutos,
+                segundos,
             )
             for col, valor in zip("ABCDE", valores):
                 c = hoja[f"{col}{i + 2}"]
                 c.value = valor
                 c.alignment = centro
                 c.border = borde
-            hoja[f"E{i + 2}"].number_format = "0.00"
 
     @staticmethod
     def generate_tpd_por_pedido_excel(db: Session) -> io.BytesIO:

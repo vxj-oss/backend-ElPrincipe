@@ -19,6 +19,8 @@ class ActivityIndicatorSummary(BaseModel):
     pedidos_con_observaciones_dia_actual: int = 0
     tiempo_promedio_decision_minutos: Optional[Decimal] = None
     tiempo_promedio_decision_minutos_general: Optional[Decimal] = None
+    tiempo_promedio_decision_segundos: Optional[Decimal] = None
+    tiempo_promedio_decision_segundos_general: Optional[Decimal] = None
     pedidos_con_decision_dia_actual: int = 0
 
 
@@ -27,6 +29,7 @@ class DiaPoint(BaseModel):
     solicitudes: int
     pedidos: int
     tiempo_promedio_decision_minutos: Optional[float] = None
+    tiempo_promedio_decision_segundos: Optional[float] = None
     pedidos_con_decision: int = 0
     fecha_completa: Optional[str] = None
     hora_inicio_decision: Optional[str] = None
