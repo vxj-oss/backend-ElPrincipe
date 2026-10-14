@@ -648,20 +648,20 @@ class ReportService:
         for i, (pedido, solicitud) in enumerate(filas):
             inicio = (solicitud.hora_apertura_modal or solicitud.fecha_solicitud).astimezone(LIMA_TZ)
             fin = pedido.fecha_aprobacion.astimezone(LIMA_TZ)
-            minutos = (fin - inicio).total_seconds() / 60
+            segundos = round((fin - inicio).total_seconds())
             apertura_pedido = pedido.hora_apertura_modal.astimezone(LIMA_TZ) if pedido.hora_apertura_modal else None
             fin_solicitud = solicitud.fecha_solicitud.astimezone(LIMA_TZ)
-            min_solicitud = (fin_solicitud - inicio).total_seconds() / 60
-            min_pedido = (fin - apertura_pedido).total_seconds() / 60 if apertura_pedido else None
+            seg_solicitud = round((fin_solicitud - inicio).total_seconds())
+            seg_pedido = round((fin - apertura_pedido).total_seconds()) if apertura_pedido else None
             data.append(
                 {
                     "Ítem": i + 1,
                     "Hora de Inicio (Apertura del registro de cotización)": inicio.strftime("%d/%m %H:%M"),
                     "Hora de Apertura (Nuevo pedido)": apertura_pedido.strftime("%d/%m %H:%M") if apertura_pedido else "—",
                     "Hora de Fin (Aprobación del pedido)": fin.strftime("%d/%m %H:%M"),
-                    "Etapa Cotización (min)": round(min_solicitud, 2),
-                    "Etapa Pedido (min)": round(min_pedido, 2) if min_pedido is not None else "—",
-                    "Tiempo de Toma de Decisión (min)": round(minutos, 2),
+                    "Etapa Cotización (seg)": seg_solicitud,
+                    "Etapa Pedido (seg)": seg_pedido if seg_pedido is not None else "—",
+                    "Tiempo de Toma de Decisión (seg)": segundos,
                 }
             )
 
@@ -674,9 +674,9 @@ class ReportService:
                     "Hora de Inicio (Apertura del registro de cotización)": "—",
                     "Hora de Apertura (Nuevo pedido)": "—",
                     "Hora de Fin (Aprobación del pedido)": "—",
-                    "Etapa Cotización (min)": "—",
-                    "Etapa Pedido (min)": "—",
-                    "Tiempo de Toma de Decisión (min)": "—",
+                    "Etapa Cotización (seg)": "—",
+                    "Etapa Pedido (seg)": "—",
+                    "Tiempo de Toma de Decisión (seg)": "—",
                 }
             ]
         )
