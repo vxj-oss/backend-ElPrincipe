@@ -70,17 +70,19 @@ class AgentService:
             )
             respuesta_texto = agent_result.get("respuesta", "Sin respuesta del modelo.")
             contexto_usado = agent_result.get("contexto_utilizado")
+            datos_agente = agent_result.get("datos_estructurados")
         except Exception as e:
             logger.error(f"Error procesando la consulta del agente: {e}")
             respuesta_texto = f"Error al procesar la cotización con el Agente Comercial: {str(e)}"
             contexto_usado = None
+            datos_agente = None
 
         elapsed = round(time.time() - start_time, 2)
         msg_assistant = MensajeAgente(
             sesion_id=sesion.id,
             rol_emisor="assistant",
             contenido=respuesta_texto,
-            datos_estructurados={"contexto_utilizado": contexto_usado} if contexto_usado else None,
+            datos_estructurados=datos_agente or ({"contexto_utilizado": contexto_usado} if contexto_usado else None),
             tiempo_respuesta_segundos=elapsed,
         )
         db.add(msg_assistant)
@@ -88,6 +90,7 @@ class AgentService:
 
         return {
             "sesion_id": sesion.id,
+            "mensaje_id": msg_assistant.id,
             "respuesta": respuesta_texto,
             "datos_estructurados": msg_assistant.datos_estructurados,
             "tiempo_respuesta": elapsed,

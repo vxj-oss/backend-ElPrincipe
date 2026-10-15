@@ -1,5 +1,6 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user
@@ -8,10 +9,14 @@ from app.models.user import Usuario
 from app.schemas.customer_request import (
     ComparacionPedidoRequest,
     ComparacionPedidoResponse,
+    NotaCotizacionRequest,
+    NotaCotizacionResponse,
     SolicitudClienteCreate,
     SolicitudClienteResponse,
 )
 from app.services.customer_request_service import SolicitudClienteService
+from app.services.quote_note_service import NotaCotizacionService
+from app.services.quote_pdf_service import generar_cotizacion_pdf
 from app.services.history_service import HistoryService
 
 router = APIRouter(prefix="/customer-requests", tags=["Cotizaciones de Clientes"])
@@ -46,6 +51,19 @@ def create_customer_request(
     return solicitud
 
 
+@router.post(
+    "/interpretar-nota",
+    response_model=NotaCotizacionResponse,
+    summary="Interpretar con IA una nota del vendedor y proponer los ítems de la cotización",
+)
+def interpret_quote_note(
+    payload: NotaCotizacionRequest,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_active_user),
+):
+    return NotaCotizacionService.interpretar(db=db, payload=payload)
+
+
 @router.get(
     "/",
     response_model=List[SolicitudClienteResponse],
@@ -77,6 +95,29 @@ def get_customer_request_detail(
             detail="Cotización de cliente no encontrada.",
         )
     return req
+
+
+@router.get(
+    "/{request_id}/pdf",
+    summary="Descargar la cotización en PDF",
+)
+def download_customer_request_pdf(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_active_user),
+):
+    req = SolicitudClienteService.get_by_id(db=db, request_id=request_id)
+    if not req:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cotización de cliente no encontrada.",
+        )
+    buffer = generar_cotizacion_pdf(db, req)
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={req.codigo_solicitud}.pdf"},
+    )
 
 
 @router.delete(

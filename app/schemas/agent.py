@@ -48,6 +48,7 @@ class AgentQueryRequest(BaseModel):
 
 class AgentQueryResponse(BaseModel):
     sesion_id: int
+    mensaje_id: Optional[int] = None
     respuesta: str
     datos_estructurados: Optional[Dict[str, Any]] = None
     tiempo_respuesta: float

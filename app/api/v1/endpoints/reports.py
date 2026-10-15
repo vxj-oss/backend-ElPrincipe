@@ -1,10 +1,13 @@
 ﻿from datetime import date, datetime, time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from app.core.time import ahora_lima
+from app.services.day_close_service import generar_cierre_dia_pdf
+from app.services.restock_service import generar_reposicion_excel
 from app.api.deps import get_current_active_user
 from app.core.database import get_db
 from app.models.user import Usuario
@@ -143,6 +146,35 @@ def download_indicators_excel(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=indicadores.xlsx"},
+    )
+
+
+@router.get("/reposicion/excel", summary="Descargar la lista de reposición de stock en Excel")
+def download_reposicion_excel(
+    factor: int = Query(2, ge=1, le=5),
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    buffer = generar_reposicion_excel(db, factor)
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=lista_reposicion.xlsx"},
+    )
+
+
+@router.get("/cierre-dia/pdf", summary="Descargar el cierre del día en PDF")
+def download_cierre_dia_pdf(
+    fecha: Optional[date] = None,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    dia = fecha or ahora_lima().date()
+    buffer = generar_cierre_dia_pdf(db, dia)
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=cierre_dia_{dia.isoformat()}.pdf"},
     )
 
 

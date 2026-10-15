@@ -8,6 +8,7 @@ from app.models.order import Pedido
 from app.models.product import Producto
 from app.services.config_service import ConfigService
 from app.services.indicator_service import IndicatorService
+from app.services.profit_service import rango_periodo, resumen_rentabilidad
 
 ESTADOS_CONFIRMADOS = ("Aprobado", "Entregado")
 
@@ -50,6 +51,10 @@ class DashboardService:
                 "total_pedidos": total_pedidos,
                 "ventas_totales": float(ventas_totales),
                 "meta_diaria_ventas": float(meta_diaria),
+            },
+            "rentabilidad": {
+                "hoy": resumen_rentabilidad(db, *rango_periodo("hoy")),
+                "mes": resumen_rentabilidad(db, *rango_periodo("mes")),
             },
             "pedidos_por_estado": {
                 "pendientes": pedidos_pendientes,

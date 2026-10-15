@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user
+from app.agent.daily_summary import resumen_del_dia
 from app.core.database import get_db
 from app.core.limiter import limiter
 from app.models.agent_session import SesionAgente
@@ -38,6 +39,17 @@ def chat_with_agent(
         session_id=payload.sesion_id,
         contexto=payload.contexto_adicional,
     )
+
+
+@router.get(
+    "/resumen-dia",
+    summary="Resumen del día para el mensaje de bienvenida del chat",
+)
+def get_daily_summary(
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_active_user),
+):
+    return {"texto": resumen_del_dia(db, current_user)}
 
 
 @router.get(

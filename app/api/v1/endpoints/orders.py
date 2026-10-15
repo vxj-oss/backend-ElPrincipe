@@ -1,5 +1,6 @@
 ﻿from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user
@@ -7,6 +8,8 @@ from app.core.database import get_db
 from app.models.user import Usuario
 from app.schemas.order import OrderCreate, OrderResponse, OrderUpdate
 from app.services.history_service import HistoryService
+from app.services.order_pdf_service import generar_pedido_pdf
+from app.services.ticket_service import generar_ticket_pedido
 from app.services.order_service import OrderService
 
 router = APIRouter(prefix="/orders", tags=["Pedidos"])
@@ -47,6 +50,44 @@ def get_order(
             detail="Pedido no encontrado",
         )
     return order
+
+
+@router.get("/{order_id}/ticket", summary="Descargar el pedido como ticket de 80 mm")
+def download_order_ticket(
+    order_id: int,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    order = OrderService.get_by_id(db, order_id)
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pedido no encontrado",
+        )
+    return StreamingResponse(
+        generar_ticket_pedido(order),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={order.codigo_pedido}-ticket.pdf"},
+    )
+
+
+@router.get("/{order_id}/pdf", summary="Descargar el pedido en PDF")
+def download_order_pdf(
+    order_id: int,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    order = OrderService.get_by_id(db, order_id)
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pedido no encontrado",
+        )
+    return StreamingResponse(
+        generar_pedido_pdf(order),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={order.codigo_pedido}.pdf"},
+    )
 
 
 @router.post(

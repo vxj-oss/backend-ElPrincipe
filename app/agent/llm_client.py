@@ -23,8 +23,9 @@ class LLMClient:
         user_prompt: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_dispatcher: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
+        max_tokens: int = 600,
     ) -> str:
-        return self._generate_groq(system_prompt, user_prompt, tools, tool_dispatcher)
+        return self._generate_groq(system_prompt, user_prompt, tools, tool_dispatcher, max_tokens)
 
 
     def _generate_groq(
@@ -33,6 +34,7 @@ class LLMClient:
         user_prompt: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_dispatcher: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
+        max_tokens: int = 600,
     ) -> str:
         if not settings.GROQ_API_KEY:
             logger.error("GROQ_API_KEY no está configurada en el .env.")
@@ -56,7 +58,7 @@ class LLMClient:
                         "messages": messages,
                         "temperature": 0.1,
                         "top_p": 0.8,
-                        "max_tokens": 600,
+                        "max_tokens": max_tokens,
                         "reasoning_effort": "low",
                     }
                     if tools:
