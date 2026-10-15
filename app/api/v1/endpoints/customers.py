@@ -1,4 +1,4 @@
-﻿from typing import List, Optional
+﻿from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
@@ -6,6 +6,7 @@ from app.api.deps import get_current_active_user
 from app.core.database import get_db
 from app.models.user import Usuario
 from app.schemas.customer import CustomerCreate, CustomerResponse, CustomerUpdate
+from app.services.customer_profile_service import obtener_ficha
 from app.services.customer_service import CustomerService
 from app.services.history_service import HistoryService
 
@@ -24,6 +25,21 @@ def list_customers(
     return CustomerService.get_all(
         db, estado=estado, search=search, skip=skip, limit=limit
     )
+
+
+@router.get("/{customer_id}/ficha", response_model=Dict[str, Any], summary="Ficha comercial del cliente")
+def get_customer_profile(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    ficha = obtener_ficha(db, customer_id)
+    if not ficha:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Cliente no encontrado",
+        )
+    return ficha
 
 
 @router.get("/{customer_id}", response_model=CustomerResponse, summary="Obtener cliente por ID")

@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.customer import CustomerResponse
@@ -64,3 +64,33 @@ class ComparacionPedidoResponse(BaseModel):
     sugerencias_correccion: List[str] = []
     ia_disponible: bool = True
     ventas_adicionales: List[str] = []
+
+
+class NotaCotizacionRequest(BaseModel):
+    texto: str = Field(..., min_length=3, max_length=3000)
+    cliente_id: Optional[int] = None
+
+
+class NotaCotizacionOpcion(BaseModel):
+    producto_id: int
+    nombre: str
+    precio: Decimal
+    stock: Optional[int] = None
+
+
+class NotaCotizacionItem(BaseModel):
+    producto_id: Optional[int] = None
+    nombre: str
+    texto_original: str
+    cantidad: int = Field(..., gt=0)
+    precio_esperado: Optional[Decimal] = None
+    stock: Optional[int] = None
+    coincidencia: Literal["catalogo", "sin_coincidencia", "ambiguo"]
+    opciones: List[NotaCotizacionOpcion] = []
+
+
+class NotaCotizacionResponse(BaseModel):
+    items: List[NotaCotizacionItem] = []
+    cliente_sugerido_id: Optional[int] = None
+    ia_disponible: bool = True
+    advertencias: List[str] = []

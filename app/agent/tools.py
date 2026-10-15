@@ -4,6 +4,12 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.metas import (
+    color_conteo,
+    color_tiempo,
+    descripcion_conteo,
+    descripcion_tiempo,
+)
 from app.models.category import Categoria
 from app.models.commercial_term import CondicionComercial
 from app.models.customer import Cliente
@@ -13,6 +19,7 @@ from app.models.order_item import DetallePedido
 from app.models.product import Producto
 from app.models.stock_movement import MovimientoStock
 from app.models.user import Usuario
+from app.services.activity_indicator_service import ActivityIndicatorService
 from app.services.decision_service import DecisionService
 from app.services.history_service import HistoryService
 from app.services.indicator_service import IndicatorService
@@ -263,10 +270,75 @@ class CommercialTools:
         }
 
     @staticmethod
+    def get_indicadores_actividad(db: Session) -> Dict[str, Any]:
+        resumen = ActivityIndicatorService.calcular_resumen(db)
+        serie = ActivityIndicatorService.get_serie_dias(db, 7)
+
+        ncca = int(resumen["solicitudes_dia_actual"])
+        npp = int(resumen["pedidos_dia_actual"])
+        tptd = resumen.get("tiempo_promedio_decision_segundos")
+        tptd_general = resumen.get("tiempo_promedio_decision_segundos_general")
+
+        color_tptd = color_tiempo(float(tptd)) if tptd is not None else None
+
+        return {
+            "dia_actual": resumen["dia_actual"],
+            "dia_anterior": resumen["dia_anterior"],
+            "NCCA": {
+                "nombre": "Número de Cotizaciones de Clientes Atendidas",
+                "valor_hoy": ncca,
+                "valor_dia_anterior": int(resumen["solicitudes_dia_anterior"]),
+                "variacion_porcentaje": float(resumen["variacion_solicitudes_pct"]),
+                "color_semaforo": color_conteo("NCCA", ncca),
+                **descripcion_conteo("NCCA", "cotizaciones"),
+            },
+            "NPP": {
+                "nombre": "Número de Pedidos Procesados",
+                "valor_hoy": npp,
+                "valor_dia_anterior": int(resumen["pedidos_dia_anterior"]),
+                "variacion_porcentaje": float(resumen["variacion_pedidos_pct"]),
+                "color_semaforo": color_conteo("NPP", npp),
+                **descripcion_conteo("NPP", "pedidos"),
+            },
+            "TPTD": {
+                "nombre": "Tiempo Promedio de Toma de Decisión",
+                "valor_hoy_segundos": round(float(tptd)) if tptd is not None else None,
+                "promedio_historico_segundos": (
+                    round(float(tptd_general)) if tptd_general is not None else None
+                ),
+                "pedidos_considerados_hoy": int(resumen.get("pedidos_con_decision_dia_actual", 0)),
+                "color_semaforo": color_tptd,
+                **descripcion_tiempo(),
+                "nota": "Mide desde que se abre el registro de cotización hasta la aprobación del pedido. Sin pedidos aprobados hoy no hay valor del día.",
+            },
+            "ultimos_dias": [
+                {
+                    "fecha": d["label"],
+                    "cotizaciones": d["solicitudes"],
+                    "pedidos": d["pedidos"],
+                    "tiempo_promedio_decision_segundos": (
+                        round(d["tiempo_promedio_decision_segundos"])
+                        if d.get("tiempo_promedio_decision_segundos") is not None
+                        else None
+                    ),
+                }
+                for d in serie
+            ],
+        }
+
+    @staticmethod
     def get_indicadores_comerciales(db: Session) -> Dict[str, Any]:
+        resultado: Dict[str, Any] = CommercialTools.get_indicadores_actividad(db)
+        complementarios = CommercialTools._indicadores_complementarios(db)
+        if complementarios:
+            resultado["indicadores_complementarios"] = complementarios
+        return resultado
+
+    @staticmethod
+    def _indicadores_complementarios(db: Session) -> Optional[Dict[str, Any]]:
         ultimo = IndicatorService.get_latest(db)
         if not ultimo:
-            return {"mensaje": "Aún no se ha calculado ningún indicador comercial en el sistema."}
+            return None
 
         decisiones_no_efectivas = [
             d for d in DecisionService.get_all(db, limit=20) if d["es_efectiva"] is False
@@ -800,7 +872,7 @@ class CommercialTools:
             "type": "function",
             "function": {
                 "name": "obtener_indicadores_comerciales",
-                "description": "Indicadores NEPP, PFCC y NTDC con sus metas y decisiones no efectivas recientes.",
+                "description": "Indicadores comerciales: NCCA (cotizaciones atendidas), NPP (pedidos procesados) y TPTD (tiempo promedio de toma de decisión en segundos) de hoy con su semáforo, comparación con el día anterior y los últimos 7 días; además los complementarios NEPP, PFCC y NTDC.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
@@ -1020,8 +1092,10 @@ class CommercialTools:
             "whatsapp", "canal", "sol-",
         ],
         "indicadores": [
-            "indicador", "indicadores", "nepp", "pfcc", "ntdc", "desempeño", "desempeno",
-            "decision", "decisión", "decisiones",
+            "indicador", "indicadores", "nepp", "pfcc", "ntdc", "ncca", "npp", "tptd",
+            "desempeño", "desempeno", "decision", "decisión", "decisiones", "como vamos",
+            "cómo vamos", "semaforo", "semáforo", "tiempo promedio", "rendimiento",
+            "cotizaciones atendidas", "pedidos procesados",
         ],
         "identidad": [
             "quien soy", "quién soy", "mi correo", "mi nombre", "mi rol", "mi perfil",

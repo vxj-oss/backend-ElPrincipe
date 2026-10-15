@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_active_user
 from app.core.database import get_db
+from app.core.metas import METAS_INDICADORES
 from app.models.user import Usuario
 from app.schemas.activity_indicator import ActivityIndicatorSummary, DiaPoint
 from app.schemas.indicator import IndicatorLogResponse, IndicatorPeriodPoint
@@ -11,6 +12,14 @@ from app.services.activity_indicator_service import ActivityIndicatorService
 from app.services.indicator_service import IndicatorService
 
 router = APIRouter(prefix="/indicators", tags=["Indicadores / KPIs"])
+
+
+@router.get(
+    "/metas",
+    summary="Metas y rangos de semáforo de NCCA, NPP y TPTD",
+)
+def get_metas_indicadores(_: Usuario = Depends(get_current_active_user)):
+    return METAS_INDICADORES
 
 
 @router.get(

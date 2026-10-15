@@ -26,9 +26,12 @@ class ConfigUpdate(BaseModel):
 @router.get("/summary", response_model=Dict[str, Any], summary="Resumen global para el dashboard")
 def get_dashboard_summary(
     db: Session = Depends(get_db),
-    _: Usuario = Depends(get_current_active_user),
+    current_user: Usuario = Depends(get_current_active_user),
 ):
-    return DashboardService.get_summary(db)
+    resumen = DashboardService.get_summary(db)
+    if current_user.rol != "administrador":
+        resumen.pop("rentabilidad", None)
+    return resumen
 
 
 @router.get("/config", response_model=ConfigResponse, summary="Configuración comercial de la empresa")
