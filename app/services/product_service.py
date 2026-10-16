@@ -85,6 +85,37 @@ class ProductService:
         return product
 
     @staticmethod
+    def reponer(db: Session, product_id: int, cantidad: int, motivo: Optional[str] = None) -> Producto:
+        product = db.scalar(select(Producto).where(Producto.id == product_id).with_for_update())
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Producto no encontrado",
+            )
+        if not product.activo:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se puede reponer stock de un producto inactivo",
+            )
+        anterior = product.stock_actual or 0
+        nuevo = anterior + cantidad
+        product.stock_actual = nuevo
+        db.add(
+            MovimientoStock(
+                producto_id=product.id,
+                pedido_id=None,
+                tipo="Entrada",
+                cantidad=cantidad,
+                stock_anterior=anterior,
+                stock_nuevo=nuevo,
+                motivo=(motivo or "Reposición de stock")[:200],
+            )
+        )
+        db.commit()
+        db.refresh(product)
+        return product
+
+    @staticmethod
     def _tiene_historial(db: Session, product_id: int) -> bool:
         en_pedidos = db.scalar(
             select(func.count(DetallePedido.id)).where(DetallePedido.producto_id == product_id)

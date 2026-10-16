@@ -46,12 +46,19 @@ class AgentService:
         prompt: str,
         session_id: Optional[int] = None,
         contexto: Optional[Dict[str, Any]] = None,
+        on_delta: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Ejecuta el pipeline completo del agente inteligente y persiste el historial."""
         start_time = time.time()
         sesion = AgentService.get_or_create_session(
             db=db, user_id=current_user.id, session_id=session_id, prompt_preview=prompt
         )
+        if sesion.titulo_sesion == "Consulta Asistente de Ventas" and prompt:
+            hay_mensajes = db.scalar(
+                select(MensajeAgente.id).where(MensajeAgente.sesion_id == sesion.id).limit(1)
+            )
+            if not hay_mensajes:
+                sesion.titulo_sesion = (prompt[:50] + "...") if len(prompt) > 50 else prompt
         msg_user = MensajeAgente(
             sesion_id=sesion.id,
             rol_emisor="user",
@@ -67,6 +74,7 @@ class AgentService:
                 prompt=prompt,
                 session_id=sesion.id,
                 contexto=contexto,
+                on_delta=on_delta,
             )
             respuesta_texto = agent_result.get("respuesta", "Sin respuesta del modelo.")
             contexto_usado = agent_result.get("contexto_utilizado")

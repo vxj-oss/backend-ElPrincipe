@@ -43,3 +43,8 @@ class ProductResponse(ProductBase):
     id: int
     creado_en: datetime
     categoria: Optional[CategoryResponse] = None
+
+
+class StockReposicion(BaseModel):
+    cantidad: int = Field(..., gt=0, le=100000)
+    motivo: Optional[str] = Field(default=None, max_length=200)

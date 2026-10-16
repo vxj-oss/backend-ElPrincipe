@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import desc, distinct, func, select
 from sqlalchemy.orm import Session, aliased, selectinload
 
+from app.agent.choices import opciones_de_clientes, respuesta_opciones
 from app.core.time import ahora_lima
 from app.models.commercial_term import CondicionComercial
 from app.models.customer import Cliente
@@ -134,11 +135,56 @@ def _armar_borrador(
             "descuento_pactado_pct": _descuento_pactado(db, cliente["id"]) if cliente else 0,
             "sugerencias": _sugerencias_cruzadas(db, ids),
             "origen": origen,
+            "explicacion": {
+                "resumen": "El modelo de IA interpretó tu nota y el sistema buscó cada producto en el catálogo. Los precios siempre salen del catálogo, no del modelo.",
+                "fuentes": ["Catálogo de productos activos", "Clientes registrados", "Condición de descuento pactada con el cliente"],
+                "formula": None,
+                "periodo": "datos al momento de la consulta",
+            },
         },
     }
 
 
+PALABRAS_ORDEN = {
+    "arma", "armar", "arme", "armes", "crea", "crear", "cree", "crees", "haz", "hacer", "haga", "hagas",
+    "genera", "generar", "genere", "generes", "registra", "registrar", "prepara", "preparar",
+    "elabora", "elaborar", "redacta", "redactar", "cotiza", "cotizame", "cotizale", "cotizanos",
+    "me", "le", "nos", "una", "un", "cotizacion", "cotizaciones", "para", "por", "favor", "puedes",
+    "quiero", "necesito", "nueva", "nuevo", "cliente",
+}
+
+
+def _pedir_lo_que_falta(db: Session, prompt: str) -> Optional[Dict[str, Any]]:
+    if re.search(r"\d", prompt):
+        return None
+    cliente, dudosos = _buscar_cliente_en_texto(db, prompt)
+    if dudosos:
+        return None
+    propios = set(tokens(cliente.razon_social)) if cliente else set()
+    sobrantes = [
+        t for t in tokens(prompt)
+        if normalizar(t) not in PALABRAS_ORDEN and t not in propios
+        and not any(_token_coincide(t, p) for p in propios)
+    ]
+    if sobrantes:
+        return None
+    if cliente:
+        texto = (
+            f"¿Qué productos le cotizo a {cliente.razon_social}? "
+            "Dime las cantidades, por ejemplo: «3 lejías y 2 papeleras»."
+        )
+    else:
+        texto = (
+            "¿Para qué cliente y qué productos? "
+            "Por ejemplo: «Lavandería Burbujas con 3 lejías y 2 papeleras»."
+        )
+    return {"respuesta": texto, "datos_estructurados": None}
+
+
 def preparar_borrador(db: Session, prompt: str) -> Optional[Dict[str, Any]]:
+    faltante = _pedir_lo_que_falta(db, prompt)
+    if faltante:
+        return faltante
     resultado = NotaCotizacionService.interpretar(
         db, NotaCotizacionRequest(texto=prompt[:3000])
     )
@@ -189,12 +235,12 @@ def _buscar_cliente_en_texto(
 ) -> Tuple[Optional[Cliente], List[Cliente]]:
     palabras = tokens(prompt)
     clientes = list(db.scalars(select(Cliente).where(Cliente.estado == "Activo")).all())
-    puntajes: List[Tuple[int, Cliente]] = []
+    puntajes: List[Tuple[Tuple[int, float], Cliente]] = []
     for cliente in clientes:
         propios = [t for t in tokens(cliente.razon_social) if t not in PALABRAS_SOCIETARIAS and len(t) >= 3]
         coincidentes = sum(1 for t in propios if any(_token_coincide(p, t) for p in palabras))
         if coincidentes:
-            puntajes.append((coincidentes, cliente))
+            puntajes.append(((coincidentes, round(coincidentes / len(propios), 4)), cliente))
     if not puntajes:
         return None, []
     mejor = max(p for p, _ in puntajes)
@@ -208,10 +254,10 @@ def repetir_ultima_cotizacion(db: Session, prompt: str) -> Dict[str, Any]:
     cliente, dudosos = _buscar_cliente_en_texto(db, prompt)
     if cliente is None and dudosos:
         nombres = ", ".join(c.razon_social for c in dudosos)
-        return {
-            "respuesta": f"¿A cuál cliente te refieres? Encontré: {nombres}.",
-            "datos_estructurados": None,
-        }
+        return respuesta_opciones(
+            f"¿A cuál cliente te refieres? Encontré: {nombres}.",
+            opciones_de_clientes(dudosos, prompt),
+        )
     if cliente is None:
         return {
             "respuesta": "¿Para qué cliente quieres repetir la última cotización? Menciónalo, por ejemplo: «hazle a Lavandería Burbujas lo mismo que la última vez».",
@@ -321,4 +367,15 @@ def clientes_para_llamar(db: Session) -> Dict[str, Any]:
         if cliente.telefono:
             detalle += f"; tel. {cliente.telefono}"
         lineas.append(f"• {cliente.razon_social} — {detalle}")
-    return {"respuesta": "\n".join(lineas), "datos_estructurados": None}
+    return {
+        "respuesta": "\n".join(lineas),
+        "datos_estructurados": {
+            "tipo": "texto",
+            "explicacion": {
+                "resumen": f"Listé los clientes activos cuya última compra fue hace más de {DIAS_SIN_COMPRAR} días.",
+                "fuentes": ["Pedidos no cancelados de cada cliente", "Productos más comprados por el cliente"],
+                "formula": f"Días sin comprar = hoy − fecha de la última compra (umbral: {DIAS_SIN_COMPRAR} días)",
+                "periodo": "historial completo",
+            },
+        },
+    }

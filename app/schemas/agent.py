@@ -52,3 +52,30 @@ class AgentQueryResponse(BaseModel):
     respuesta: str
     datos_estructurados: Optional[Dict[str, Any]] = None
     tiempo_respuesta: float
+
+
+class SerieGrafico(BaseModel):
+    nombre: str = Field(default="Valor", max_length=100)
+    valores: List[Optional[float]] = Field(default_factory=list, max_length=400)
+    tipo: Optional[str] = Field(default=None, max_length=20)
+
+
+class SeccionInforme(BaseModel):
+    titulo: str = Field(default="", max_length=120)
+    lineas: List[str] = Field(default_factory=list, max_length=40)
+
+
+class InformePdfRequest(BaseModel):
+    titulo: str = Field(default="Informe", max_length=200)
+    secciones: List[SeccionInforme] = Field(default_factory=list, max_length=12)
+    grafico: Optional[Dict[str, Any]] = None
+
+
+class GraficoPdfRequest(BaseModel):
+    titulo: str = Field(default="Gráfico", max_length=200)
+    grafico: Literal["bar", "line", "doughnut"] = "bar"
+    labels: List[str] = Field(default_factory=list, max_length=400)
+    series: List[SerieGrafico] = Field(default_factory=list, max_length=8)
+    prefijo: str = Field(default="", max_length=10)
+    horizontal: bool = False
+    explicacion: Optional[Dict[str, Any]] = None
