@@ -7,7 +7,7 @@ from app.api.deps import get_current_active_admin, get_current_active_user
 from app.core.database import get_db
 from app.models.stock_movement import MovimientoStock
 from app.models.user import Usuario
-from app.schemas.product import ProductCreate, ProductResponse, ProductUpdate
+from app.schemas.product import ProductCreate, ProductResponse, ProductUpdate, StockReposicion
 from app.schemas.stock_movement import StockMovementResponse
 from app.services.history_service import HistoryService
 from app.services.product_service import ProductService
@@ -91,6 +91,26 @@ def update_product(
         db, "ACTUALIZAR", "Productos", current_user.id,
         {"entidad": prod.sku, "descripcion": f"Actualizó datos de {prod.nombre} ({prod.sku})"},
         request.client.host if request.client else None
+    )
+    return prod
+
+
+@router.post("/{product_id}/reponer", response_model=ProductResponse, summary="Registrar ingreso de stock")
+def restock_product(
+    product_id: int,
+    payload: StockReposicion,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_active_admin),
+):
+    prod = ProductService.reponer(db, product_id, payload.cantidad, payload.motivo)
+    HistoryService.log(
+        db, "ACTUALIZAR", "Productos", current_user.id,
+        {
+            "entidad": prod.sku,
+            "descripcion": f"Repuso {payload.cantidad} u. de {prod.nombre} ({prod.sku}); stock actual {prod.stock_actual}",
+        },
+        request.client.host if request.client else None,
     )
     return prod
 

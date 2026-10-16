@@ -1,10 +1,11 @@
 import re
 from datetime import datetime, time, timedelta
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.agent.choices import opciones_de_clientes, respuesta_opciones
 from app.agent.tools import CommercialTools
 from app.core.time import LIMA_TZ, ahora_lima
 from app.models.customer import Cliente
@@ -13,6 +14,7 @@ from app.models.order import Pedido
 from app.models.order_item import DetallePedido
 from app.models.product import Producto
 from app.agent.quote_intent import _buscar_cliente_en_texto
+from app.services import analytics_service as an
 from app.services.config_service import ConfigService
 from app.services.customer_profile_service import obtener_ficha
 from app.services.profit_service import productos_mas_vendidos, rango_periodo, resumen_rentabilidad
@@ -55,6 +57,8 @@ PAT_CLIENTE = re.compile(
     r"|\bsuele (?:llevar|comprar)\b|\bcotizaciones? pendientes? (?:de|del)\b|\btelefono\b|\bcelular\b"
     r"|\bcontacto\b|\bcorreo\b|\bficha\b|\bresumen (?:del? )?cliente\b|\bhistorial de compras\b"
     r"|\bticket promedio\b|\bcondicion(?:es)? (?:comercial(?:es)?|pactadas?) (?:de|del)\b"
+    r"|\b(?:detalles?|informacion|datos|perfil|ficha) (?:del? |sobre |de la )?(?:el )?cliente\b"
+    r"|\b(?:dime|cuentame|hablame|dame) (?:de|sobre|del) (?:el )?cliente\b"
 )
 PAT_META = re.compile(r"\bavance\b.*\bmeta\b|\bmeta (?:diaria|comercial|de ventas)\b|\bcuanto (?:me )?falta\b.*\bmeta\b")
 PAT_MARGEN = re.compile(r"\bmargen(?:es)?\b|\brentabilidad\b|\bganancias?\b|\butilidad(?:es)?\b")
@@ -70,6 +74,9 @@ PAT_PRODUCTO = re.compile(
     r"\b(?:stock|precio|precios|cuesta|cuestan|vale|valen|tenemos|tienen|tienes|queda|quedan|disponible|disponibles)\b"
     r"|\bcuanto hay\b|\bhay\b"
 )
+PAT_PRODUCTO_FUERTE = re.compile(
+    r"\b(?:stock|precio|precios|cuesta|cuestan|vale|valen|disponible|disponibles|queda|quedan|cuanto hay|unidades)\b"
+)
 PAT_OTROS = re.compile(
     r"\b(?:cliente|clientes|pedido|pedidos|cotizacion|cotizaciones|venta|ventas|vendi|vendimos|margen|"
     r"rotacion|promedio|compar\w+|historial|movimiento|movimientos|usuario|usuarios)\b"
@@ -80,10 +87,12 @@ PALABRAS_PREGUNTA = {
     "vale", "valen", "hay", "tenemos", "tienen", "tienes", "tiene", "queda", "quedan", "disponible",
     "disponibles", "unidades", "unidad", "cual", "cuales", "que", "dame", "dime", "favor", "me",
     "puedes", "saber", "hoy", "ahora", "costo", "aun", "todavia", "actual", "actualmente",
+    "muestrame", "muestra", "ensename", "mostrar", "ver", "quiero", "necesito", "veme", "abre", "llevame",
     "producto", "productos", "tendremos", "tengo", "algun", "alguna", "existe", "existen", "unos", "unas",
 }
 
 MAX_LINEAS = 8
+MAX_DIRECTO = 3
 MAX_PEDIDOS = 10
 MAX_PRODUCTOS_CRITICOS = 10
 
@@ -258,12 +267,24 @@ def _ayuda() -> str:
     return "\n".join(
         [
             "Esto es lo que puedo hacer por ti:",
-            "• Indicadores: «¿cómo vamos hoy?»",
+            "• Indicadores: «¿cómo vamos hoy?», «gráfico del TPTD de los últimos 7 días», «¿cómo mejoro el NPP?»",
             "• Ventas y meta: «ventas del mes», «margen de la semana», «avance de meta»",
+            "• Gráficos: «gráfico de ventas del 1 al 10 de octubre», «productos más vendidos de septiembre en gráfico», «mejores clientes del mes», «compara este mes con el mes pasado»",
             "• Productos: «stock de papeleras», «productos más vendidos del mes», «stock crítico»",
             "• Clientes: «¿cuánto ha comprado Burbujas?», «¿qué lleva Hotel Rosas?», «teléfono de Juan», «¿a quién debo llamar hoy?»",
             "• Pedidos y cotizaciones: «pedidos pendientes», «estado del pedido PED-XXXX», «detalle de COT-XXXX»",
+            "• Clientes y cotizaciones: «cambia el teléfono de Hotel Rosas a 987654321», «desactiva al cliente Pamela», «elimina la cotización COT-XXXX»",
+            "• Pedidos: «en el pedido PED-XXXX cambia las lejías a 5 y quita las papeleras»",
+            "• Reportes: «reporte de pedidos del mes en Excel», «inventario en PDF», «el cierre del día», «lista de reposición», «TPTD por día»",
+            "• Productos (administrador): «crea el producto Jabón líquido 1 lt, precio 12, costo 8, categoría Limpieza», «cámbiale el precio a la lejía a 13», «súbele el costo a las escobas en 10 %», «elimina el producto escoba de paja», «reactiva el producto …»",
+            "• Condiciones comerciales: «ponle a Hotel Rosas un descuento del 10 %», «dale crédito de 15 días a Pamela», «quítale el descuento a Maria»",
+            "• Clientes nuevos: «crea el cliente Lavandería El Sol, RUC 20123456789, teléfono 987654321, mayorista»",
             "• Cotizar: «arma una cotización para … con 3 lejías» o «hazle a … lo mismo que la última vez»",
+            "• Predicción: «pronóstico de ventas de la próxima semana», «¿cómo cerraré el mes?», «pronóstico de la escoba»",
+            "• Simulador: «¿qué pasa si subo 5 % el precio de la lejía?», «¿y si le doy 10 % de descuento a Hotel Rosas?»",
+            "• Venta cruzada: «¿qué suelen comprar con la lejía?», «¿qué le puedo ofrecer a Hotel Rosas?»",
+            "• Informe e inusuales: «informe semanal» (con PDF), «¿hay algo raro en mis ventas?»",
+            "• Cualquier otra pregunta sobre tus datos: la analizo directamente en la base de datos (solo lectura), por ejemplo «¿qué día de la semana vendemos más?»",
             "Tip: escribe «/» para ver todos los comandos.",
         ]
     )
@@ -424,64 +445,181 @@ def _consulta_producto(limpio: str, prompt: str) -> Optional[str]:
     return " ".join(restantes)
 
 
-def _stock_precio(db: Session, consulta: str) -> str:
+def _stock_precio(db: Session, consulta: str, estricto: bool = True) -> Tuple[Optional[str], Optional[List[Tuple[str, str]]]]:
     productos = list(db.scalars(select(Producto).where(Producto.activo.is_(True))).all())
     por_id = {p.id: p for p in productos}
     lista = candidatos(consulta, [(p.id, p.nombre) for p in productos])
     exactos = [c for c in lista if c[2] >= 1.0]
 
     if not exactos:
+        if not lista and not estricto:
+            return None, None
         if lista:
             parecidos = ", ".join(c[1] for c in lista[:3])
-            return f"No encontré «{consulta}» en el catálogo. ¿Quizás buscas: {parecidos}?"
-        return f"No encontré productos que coincidan con «{consulta}»."
+            return f"No encontré «{consulta}» en el catálogo. ¿Quizás buscas: {parecidos}?", None
+        return f"No encontré productos que coincidan con «{consulta}».", None
 
     ordenados = sorted((por_id[c[0]] for c in exactos), key=lambda p: p.nombre)
+    objetivo = normalizar(consulta)
+    iguales = [p for p in ordenados if normalizar(p.nombre) == objetivo]
+    if iguales:
+        ordenados = iguales[:1]
+
+    if len(ordenados) > MAX_DIRECTO:
+        opciones = [(p.nombre, f"stock de {p.nombre}") for p in ordenados[:MAX_LINEAS]]
+        extra = f" Te muestro los {MAX_LINEAS} primeros." if len(ordenados) > MAX_LINEAS else ""
+        return f"Encontré {len(ordenados)} productos para «{consulta}». ¿Cuál te interesa?{extra}", opciones
+
     lineas = [
         f"Encontré {len(ordenados)} {'producto' if len(ordenados) == 1 else 'productos'} para «{consulta}»:"
     ]
-    for p in ordenados[:MAX_LINEAS]:
+    for p in ordenados:
         aviso = f" (bajo el mínimo de {p.stock_minimo})" if (p.stock_actual or 0) <= (p.stock_minimo or 0) else ""
         lineas.append(f"• {p.nombre} — {_soles(p.precio_unitario)} — stock {p.stock_actual or 0}{aviso}")
-    if len(ordenados) > MAX_LINEAS:
-        lineas.append(f"Hay {len(ordenados) - MAX_LINEAS} más; escribe más detalle para afinar la búsqueda.")
-    return "\n".join(lineas)
+    return "\n".join(lineas), None
 
 
-def responder_rapido(db: Session, prompt: str, usuario=None) -> Optional[str]:
+def _resp(texto: str, resumen: Optional[str] = None, fuentes: Optional[List[str]] = None, formula: Optional[str] = None, periodo: Optional[str] = None) -> Dict[str, Any]:
+    datos = None
+    if resumen:
+        datos = {
+            "tipo": "texto",
+            "explicacion": {"resumen": resumen, "fuentes": fuentes or [], "formula": formula, "periodo": periodo},
+        }
+    return {"respuesta": texto, "datos_estructurados": datos}
+
+
+def _periodo_texto(limpio: str) -> str:
+    periodo = _periodo_en_texto(limpio)
+    if periodo:
+        return an.texto_rango(periodo)
+    return f"hoy ({an.texto_rango('hoy')}), semana ({an.texto_rango('semana')}) y mes ({an.texto_rango('mes')})"
+
+
+def responder_rapido(db: Session, prompt: str, usuario=None) -> Optional[Dict[str, Any]]:
     limpio = normalizar(prompt)
     if PAT_SALUDO.match(limpio):
-        return _saludo(usuario)
+        return _resp(_saludo(usuario))
     if PAT_GRACIAS.match(limpio):
-        return "¡Con gusto! Si necesitas algo más, aquí estoy."
+        return _resp("¡Con gusto! Si necesitas algo más, aquí estoy.")
     if PAT_AYUDA.search(limpio):
-        return _ayuda()
+        return _resp(_ayuda())
     detalle = _detalle_codigo(db, prompt)
     if detalle:
-        return detalle
+        return _resp(
+            detalle,
+            "Busqué el código exacto en los pedidos o cotizaciones registrados.",
+            ["Tabla de pedidos o de cotizaciones de clientes", "Detalle de productos del documento"],
+            None,
+            None,
+        )
     if PAT_EXPLICAR.search(limpio):
         return None
     if PAT_CRITICO.search(limpio):
-        return _stock_critico(db)
+        return _resp(
+            _stock_critico(db),
+            "Listé los productos activos cuyo stock actual llegó al mínimo definido.",
+            ["Catálogo de productos activos"],
+            "Stock crítico = stock actual ≤ stock mínimo",
+            "stock al momento de la consulta",
+        )
     if PAT_PENDIENTES.search(limpio):
-        return _pedidos_pendientes(db)
+        return _resp(
+            _pedidos_pendientes(db),
+            "Listé los pedidos que todavía no se confirmaron.",
+            ["Pedidos con estado Pendiente"],
+            None,
+            "todos los pendientes",
+        )
     if PAT_COMPRARON_HOY.search(limpio):
-        return _clientes_hoy(db)
+        return _resp(
+            _clientes_hoy(db),
+            "Agrupé por cliente los pedidos de hoy que no fueron cancelados.",
+            ["Pedidos del día en hora de Lima, excepto cancelados"],
+            "Total del cliente = Σ monto_total de sus pedidos de hoy",
+            an.texto_rango("hoy"),
+        )
     if PAT_INDICADORES.search(limpio) and not PAT_LEGADO.search(limpio):
-        return _indicadores(db)
+        respuesta_indicadores = _resp(
+            _indicadores(db),
+            "Mostré los tres indicadores de la tesis con su semáforo según las metas configuradas.",
+            [
+                "NCCA: cotizaciones atendidas en el día",
+                "NPP: pedidos procesados en el día",
+                "TPTD: tiempo entre abrir el pedido y aprobarlo",
+            ],
+            "TPTD = Σ (hora de aprobación − hora de apertura) ÷ pedidos aprobados",
+            an.texto_rango("hoy"),
+        )
+        respuesta_indicadores["datos_estructurados"]["tipo"] = "analisis"
+        respuesta_indicadores["datos_estructurados"]["acciones"] = [
+            {"tipo": "pregunta", "etiqueta": "¿Cómo mejoro los indicadores?", "texto": "¿Cómo mejoro los indicadores?"},
+            {"tipo": "pregunta", "etiqueta": "Ver gráfico", "texto": "gráfico de los indicadores de los últimos 7 días"},
+        ]
+        return respuesta_indicadores
     if PAT_META.search(limpio):
-        return _avance_meta(db)
+        return _resp(
+            _avance_meta(db),
+            "Comparé las ventas confirmadas de hoy con la meta diaria configurada.",
+            ["Pedidos Aprobados o Entregados de hoy", "Meta diaria en Configuración"],
+            "Avance = ventas de hoy ÷ meta diaria × 100",
+            an.texto_rango("hoy"),
+        )
     if PAT_MARGEN.search(limpio):
-        return _margen(db, limpio, usuario)
+        texto = _margen(db, limpio, usuario)
+        if texto.startswith("El margen y los costos solo"):
+            return _resp(texto)
+        return _resp(
+            texto,
+            "Resté el costo de los productos vendidos a las ventas confirmadas.",
+            ["Detalle de pedidos Aprobados o Entregados", "Costo registrado de cada producto"],
+            "Margen = Σ subtotal − Σ (costo del producto × cantidad)",
+            _periodo_texto(limpio),
+        )
     if PAT_TOP.search(limpio):
-        return _mas_vendidos(db, limpio)
+        return _resp(
+            _mas_vendidos(db, limpio),
+            "Ordené los productos por unidades vendidas en pedidos confirmados.",
+            ["Detalle de pedidos Aprobados o Entregados"],
+            "Ranking por Σ cantidad vendida",
+            an.texto_rango(_periodo_en_texto(limpio) or "mes"),
+        )
     if PAT_VENTAS.search(limpio):
-        return _ventas(db, limpio)
+        return _resp(
+            _ventas(db, limpio),
+            "Sumé los pedidos confirmados de cada periodo.",
+            ["Detalle de pedidos Aprobados o Entregados"],
+            "Ventas = Σ subtotal de los pedidos confirmados",
+            _periodo_texto(limpio),
+        )
     if PAT_CLIENTE.search(limpio):
+        cliente_unico, dudosos = _buscar_cliente_en_texto(db, prompt)
+        if cliente_unico is None and dudosos:
+            return respuesta_opciones(
+                "¿A cuál cliente te refieres? Encontré: " + ", ".join(c.razon_social for c in dudosos) + ".",
+                opciones_de_clientes(dudosos, prompt),
+            )
         respuesta_cliente = _cliente(db, prompt, limpio)
         if respuesta_cliente:
-            return respuesta_cliente
+            return _resp(
+                respuesta_cliente,
+                "Armé la ficha del cliente con su historial de pedidos y cotizaciones.",
+                ["Pedidos no cancelados del cliente", "Cotizaciones pendientes", "Datos de contacto registrados"],
+                "Ticket promedio = total comprado ÷ número de pedidos",
+                "historial completo",
+            )
     consulta = _consulta_producto(limpio, prompt)
     if consulta:
-        return _stock_precio(db, consulta)
+        texto_stock, opciones_stock = _stock_precio(db, consulta, bool(PAT_PRODUCTO_FUERTE.search(limpio)))
+        if texto_stock is None:
+            return None
+        if opciones_stock:
+            return respuesta_opciones(texto_stock, opciones_stock)
+        return _resp(
+            texto_stock,
+            "Busqué el nombre en el catálogo activo, tolerando plurales y errores de tipeo.",
+            ["Catálogo de productos activos: precio y stock actual"],
+            None,
+            "stock al momento de la consulta",
+        )
     return None

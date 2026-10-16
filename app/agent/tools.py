@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.agent import sql_tool
+from app.services import analytics_service
 from app.core.metas import (
     color_conteo,
     color_tiempo,
@@ -483,6 +485,18 @@ class CommercialTools:
                 or_(Cliente.razon_social.ilike(term), Cliente.ruc_dni.ilike(term))
             )
         )
+        if not cliente:
+            from app.agent.quote_intent import _buscar_cliente_en_texto
+
+            aproximado, dudosos = _buscar_cliente_en_texto(db, query)
+            if aproximado is None and dudosos:
+                return {
+                    "encontrado": False,
+                    "mensaje": "Hay varios clientes parecidos: "
+                    + ", ".join(c.razon_social for c in dudosos)
+                    + ". Pide al usuario que indique cuál.",
+                }
+            cliente = aproximado
         if not cliente:
             return {
                 "encontrado": False,
@@ -1049,6 +1063,55 @@ class CommercialTools:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "consultar_base_datos",
+                "description": (
+                    "Consulta de solo lectura a la base de datos del negocio (PostgreSQL). Úsala cuando ninguna otra "
+                    "herramienta cubra la pregunta: conteos, sumas, promedios, rankings, filtros por fecha, cruces entre "
+                    "clientes, pedidos, productos, cotizaciones, stock, usuarios, etc. Escribe UNA sentencia SELECT (o WITH) "
+                    "usando el esquema indicado en el contexto. Devuelve hasta 50 filas."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "sql": {"type": "string", "description": "Sentencia SELECT de PostgreSQL, sin punto y coma ni comentarios."}
+                    },
+                    "required": ["sql"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "analizar_reposicion",
+                "description": "Cobertura de stock: productos que se agotarían pronto según su ritmo de venta de los últimos 30 días, con días de cobertura y cantidad sugerida a pedir.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "analizar_recompra_clientes",
+                "description": "Clientes que ya están en su momento habitual de recompra según cada cuántos días compran, con días sin comprar.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "diagnostico_ventas",
+                "description": "Compara las ventas de un periodo contra el anterior (mismos días transcurridos) y explica qué productos y clientes explican la diferencia.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "periodo": {"type": "string", "enum": ["hoy", "semana", "mes"], "description": "Periodo a analizar."}
+                    },
+                    "required": [],
+                },
+            },
+        },
     ]
 
     TOOL_CATEGORIES: Dict[str, set] = {
@@ -1072,6 +1135,9 @@ class CommercialTools:
         "listar_trabajadores": {"identidad"},
         "listar_categorias": {"productos"},
         "consultar_historial_auditoria": {"auditoria"},
+        "analizar_reposicion": {"productos"},
+        "analizar_recompra_clientes": {"clientes"},
+        "diagnostico_ventas": {"pedidos"},
     }
 
     CATEGORY_KEYWORDS: Dict[str, List[str]] = {
@@ -1109,6 +1175,13 @@ class CommercialTools:
     }
 
     @classmethod
+    def herramienta(cls, nombre: str) -> Optional[Dict[str, Any]]:
+        for schema in cls.TOOL_SCHEMAS:
+            if schema["function"]["name"] == nombre:
+                return schema
+        return None
+
+    @classmethod
     def select_relevant_tools(cls, query: str) -> List[Dict[str, Any]]:
         """Filtra las tools enviadas al modelo según palabras clave de la consulta,
         para no mandar siempre el esquema completo y ahorrar tokens por request.
@@ -1119,15 +1192,17 @@ class CommercialTools:
             for categoria, palabras in cls.CATEGORY_KEYWORDS.items()
             if any(palabra in texto for palabra in palabras)
         }
+        consulta_sql = cls.herramienta("consultar_base_datos")
         if not categorias_detectadas:
-            return cls.TOOL_SCHEMAS
+            base = [cls.herramienta(n) for n in ("listar_trabajadores", "obtener_indicadores_comerciales")]
+            return [consulta_sql] + [h for h in base if h]
 
         seleccionadas = [
             schema
             for schema in cls.TOOL_SCHEMAS
             if cls.TOOL_CATEGORIES.get(schema["function"]["name"], set()) & categorias_detectadas
         ]
-        return seleccionadas or cls.TOOL_SCHEMAS
+        return [consulta_sql] + seleccionadas
 
     @classmethod
     def dispatch(cls, db: Session, current_user: Usuario, name: str, arguments: Dict[str, Any]) -> Any:
@@ -1159,6 +1234,14 @@ class CommercialTools:
             ),
             "buscar_cliente_detalle": lambda: cls.get_customer_detail(
                 db, arguments.get("query", "")
+            ),
+            "consultar_base_datos": lambda: sql_tool.ejecutar(
+                arguments.get("sql", ""), es_admin=getattr(current_user, "rol", None) == "administrador"
+            ),
+            "analizar_reposicion": lambda: analytics_service.cobertura_stock(db),
+            "analizar_recompra_clientes": lambda: analytics_service.cadencia_clientes(db),
+            "diagnostico_ventas": lambda: analytics_service.diagnostico(
+                db, arguments.get("periodo") if arguments.get("periodo") in ("hoy", "semana", "mes") else "semana"
             ),
             "listar_solicitudes_clientes": lambda: cls.get_customer_requests(
                 db, estado=arguments.get("estado"), limit=arguments.get("limit", 10)
