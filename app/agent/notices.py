@@ -1,20 +1,12 @@
-from datetime import timedelta
 from typing import Any, Dict, List
 
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.agent.anomalies import detectar_anomalias
-from app.core.time import ahora_lima
-from app.models.order import Pedido
 from app.services import analytics_service as an
-from app.services.config_service import ConfigService
-from app.services.profit_service import rango_periodo, resumen_rentabilidad
 
 DIAS_ALERTA_STOCK = 7
 DIAS_URGENTE_STOCK = 3
-HORA_REVISION_META = 15
-PORCENTAJE_META_MINIMO = 50
 ORDEN_NIVEL = {"alta": 0, "media": 1, "info": 2}
 
 
@@ -48,73 +40,74 @@ def _aviso_stock(db: Session) -> List[Dict[str, Any]]:
     ]
 
 
+def _espera(horas: int) -> str:
+    if horas < 1:
+        return "hace menos de una hora"
+    if horas < 24:
+        return f"hace {horas} h"
+    dias = horas // 24
+    return f"hace {dias} {_plural(dias, 'día', 'días')}"
+
+
 def _aviso_recompra(db: Session) -> List[Dict[str, Any]]:
     filas = an.cadencia_clientes(db, limite=30)
     if not filas:
         return []
     n = len(filas)
+    primero = filas[0]
+    habituales = an.productos_habituales(db, primero["id"], 2)
+    detalle = (
+        f"{primero['nombre']} suele pedir {' y '.join(habituales)}; arma su cotización con un clic."
+        if habituales
+        else f"{primero['nombre']} ya está en su momento habitual de compra."
+    )
     return [
         {
             "id": "recompra",
-            "nivel": "media",
-            "titulo": f"{n} {_plural(n, 'cliente está', 'clientes están')} en su momento de recompra",
-            "detalle": f"Por ejemplo: {filas[0]['nombre']}.",
-            "accion": {"tipo": "pregunta", "etiqueta": "Ver quiénes", "texto": "¿A quién le toca comprar?"},
-        }
-    ]
-
-
-def _aviso_seguimiento(db: Session) -> List[Dict[str, Any]]:
-    n = an.cotizaciones_sin_seguimiento(db)
-    if not n:
-        return []
-    return [
-        {
-            "id": "seguimiento",
-            "nivel": "media",
-            "titulo": f"{n} {_plural(n, 'cotización sin seguimiento', 'cotizaciones sin seguimiento')}",
-            "detalle": "Llevan más de un día sin convertirse en pedido.",
-            "accion": {"tipo": "enlace", "etiqueta": "Abrir cotizaciones", "ruta": "/solicitudes"},
-        }
-    ]
-
-
-def _aviso_pendientes(db: Session) -> List[Dict[str, Any]]:
-    limite = ahora_lima() - timedelta(hours=24)
-    n = db.scalar(
-        select(func.count(Pedido.id)).where(Pedido.estado == "Pendiente", Pedido.fecha_pedido < limite)
-    ) or 0
-    if not n:
-        return []
-    return [
-        {
-            "id": "pendientes",
-            "nivel": "media",
-            "titulo": f"{n} {_plural(n, 'pedido pendiente', 'pedidos pendientes')} hace más de un día",
-            "detalle": "Conviene confirmarlos o revisarlos.",
-            "accion": {"tipo": "pregunta", "etiqueta": "Ver pendientes", "texto": "¿Qué pedidos están pendientes de confirmar?"},
-        }
-    ]
-
-
-def _aviso_meta(db: Session) -> List[Dict[str, Any]]:
-    ahora = ahora_lima()
-    if ahora.hour < HORA_REVISION_META:
-        return []
-    meta = float(ConfigService.get(db).meta_diaria_ventas)
-    if not meta:
-        return []
-    ventas = resumen_rentabilidad(db, *rango_periodo("hoy"))["ventas"]
-    porcentaje = ventas / meta * 100
-    if porcentaje >= PORCENTAJE_META_MINIMO:
-        return []
-    return [
-        {
-            "id": "meta",
             "nivel": "info",
-            "titulo": f"Llevas el {porcentaje:.0f} % de la meta diaria",
-            "detalle": f"Faltan S/ {max(0.0, meta - ventas):,.2f} para cumplirla.",
-            "accion": {"tipo": "pregunta", "etiqueta": "Ver avance", "texto": "¿Cuál es mi avance de meta diaria?"},
+            "titulo": f"{n} {_plural(n, 'cliente con pedido habitual', 'clientes con pedido habitual')}",
+            "detalle": detalle,
+            "accion": {
+                "tipo": "pregunta",
+                "etiqueta": "Armar cotización",
+                "texto": f"Hazle a {primero['nombre']} lo mismo que la última vez",
+            },
+        }
+    ]
+
+
+def _aviso_por_convertir(db: Session) -> List[Dict[str, Any]]:
+    datos = an.cotizaciones_por_convertir(db)
+    if not datos["total"]:
+        return []
+    n = datos["total"]
+    primera = datos["items"][0]
+    demora = any(i["horas"] >= 24 for i in datos["items"])
+    return [
+        {
+            "id": "por_convertir",
+            "nivel": "media" if demora else "info",
+            "titulo": f"{n} {_plural(n, 'cotización lista para convertir en pedido', 'cotizaciones listas para convertir en pedido')}",
+            "detalle": f"La más antigua es {primera['codigo']} de {primera['cliente']} ({_espera(primera['horas'])}).",
+            "accion": {"tipo": "enlace", "etiqueta": "Abrir cotizaciones", "ruta": "/solicitudes?estado=Pendiente"},
+        }
+    ]
+
+
+def _aviso_por_aprobar(db: Session) -> List[Dict[str, Any]]:
+    datos = an.pedidos_por_aprobar(db)
+    if not datos["total"]:
+        return []
+    n = datos["total"]
+    primero = datos["items"][0]
+    demora = primero["horas"] >= 4
+    return [
+        {
+            "id": "por_aprobar",
+            "nivel": "media" if demora else "info",
+            "titulo": f"{n} {_plural(n, 'pedido esperando aprobación', 'pedidos esperando aprobación')}",
+            "detalle": f"El primero es {primero['codigo']} de {primero['cliente']} ({_espera(primero['horas'])}).",
+            "accion": {"tipo": "pregunta", "etiqueta": "Ver pedidos", "texto": "¿Qué pedidos están pendientes de confirmar?"},
         }
     ]
 
@@ -127,17 +120,17 @@ def _aviso_anomalias(db: Session) -> List[Dict[str, Any]]:
     return [
         {
             "id": "anomalias",
-            "nivel": "alta" if any(h["nivel"] == "alta" for h in hallazgos) else "media",
-            "titulo": f"{n} {_plural(n, 'dato inusual', 'datos inusuales')} por revisar",
+            "nivel": "media",
+            "titulo": f"{n} {_plural(n, 'dato de pedido por verificar', 'datos de pedidos por verificar')}",
             "detalle": hallazgos[0]["titulo"] + ".",
-            "accion": {"tipo": "pregunta", "etiqueta": "Ver qué es", "texto": "¿Hay algo raro en mis ventas?"},
+            "accion": {"tipo": "pregunta", "etiqueta": "Ver qué es", "texto": "¿Hay algo raro en mis pedidos?"},
         }
     ]
 
 
 def avisos_proactivos(db: Session) -> List[Dict[str, Any]]:
     avisos: List[Dict[str, Any]] = []
-    for generador in (_aviso_stock, _aviso_recompra, _aviso_seguimiento, _aviso_pendientes, _aviso_meta, _aviso_anomalias):
+    for generador in (_aviso_stock, _aviso_por_aprobar, _aviso_por_convertir, _aviso_recompra, _aviso_anomalias):
         avisos += generador(db)
     avisos.sort(key=lambda a: ORDEN_NIVEL[a["nivel"]])
     return avisos

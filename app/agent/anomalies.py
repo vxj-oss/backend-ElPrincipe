@@ -10,7 +10,6 @@ from app.models.customer import Cliente
 from app.models.order import Pedido
 from app.models.order_item import DetallePedido
 from app.models.product import Producto
-from app.services import analytics_service as an
 from app.services.profit_service import ESTADOS_CONFIRMADOS
 
 DIAS_REVISION = 14
@@ -21,9 +20,6 @@ VECES_MEDIANA_MONTO = 3.0
 DESVIO_PRECIO = 0.30
 MIN_LINEAS_CANTIDAD = 4
 VECES_CANTIDAD = 5.0
-MIN_SEMANAS_DIA = 3
-CAIDA_DIA = 0.4
-SUBIDA_DIA = 2.5
 MAX_POR_TIPO = 3
 
 
@@ -60,7 +56,7 @@ def _montos_inusuales(db: Session, ahora) -> List[Dict[str, Any]]:
         {
             "tipo": "monto",
             "nivel": "media",
-            "titulo": f"Pedido {codigo} de monto inusual",
+            "titulo": f"Revisa el monto de {codigo}",
             "detalle": f"{cliente}: {_soles(float(monto))}, cuando un pedido normal ronda {_soles(median(base))}.",
             "accion": _pregunta(f"Ver {codigo}", f"detalle del pedido {codigo}"),
         }
@@ -89,7 +85,7 @@ def _precios_fuera_de_catalogo(db: Session, ahora) -> List[Dict[str, Any]]:
         {
             "tipo": "precio",
             "nivel": "media",
-            "titulo": f"{producto} con precio distinto al catálogo",
+            "titulo": f"Revisa el precio de {producto}",
             "detalle": f"En {codigo} se vendió a {_soles(precio)} y el catálogo dice {_soles(catalogo)} ({desvio * 100:+.0f} %).",
             "accion": _pregunta(f"Ver {codigo}", f"detalle del pedido {codigo}"),
         }
@@ -126,7 +122,7 @@ def _cantidades_inusuales(db: Session, ahora) -> List[Dict[str, Any]]:
         {
             "tipo": "cantidad",
             "nivel": "media",
-            "titulo": f"Cantidad inusual de {nombre}",
+            "titulo": f"Revisa la cantidad de {nombre}",
             "detalle": f"En {codigo} se pidieron {cantidad} unidades; lo habitual por pedido es {habitual:.1f}.",
             "accion": _pregunta(f"Ver {codigo}", f"detalle del pedido {codigo}"),
         }
@@ -134,53 +130,14 @@ def _cantidades_inusuales(db: Session, ahora) -> List[Dict[str, Any]]:
     ]
 
 
-def _dia_atipico(db: Session, hoy) -> List[Dict[str, Any]]:
-    ayer = hoy - timedelta(days=1)
-    inicio = ayer - timedelta(days=7 * 8)
-    por_dia = an.ventas_por_dia(db, f"{an.PREFIJO_RANGO}{inicio.isoformat()}:{ayer.isoformat()}")
-    previos = [
-        por_dia.get(ayer - timedelta(days=7 * k), 0.0) for k in range(1, 9)
-    ]
-    con_venta = [v for v in previos if v > 0]
-    if len(con_venta) < MIN_SEMANAS_DIA:
-        return []
-    habitual = mean(previos)
-    real = por_dia.get(ayer, 0.0)
-    dia = an.DIAS_SEMANA[ayer.weekday()]
-    if habitual and real < CAIDA_DIA * habitual:
-        return [
-            {
-                "tipo": "dia",
-                "nivel": "alta",
-                "titulo": f"Ayer vendiste mucho menos de lo normal para un {dia}",
-                "detalle": f"Vendiste {_soles(real)} y un {dia} suele rondar {_soles(habitual)}.",
-                "accion": _pregunta("¿Por qué?", "¿Por qué cambiaron las ventas ayer?"),
-            }
-        ]
-    if habitual and real > SUBIDA_DIA * habitual:
-        return [
-            {
-                "tipo": "dia",
-                "nivel": "info",
-                "titulo": f"Ayer fue un {dia} excepcionalmente bueno",
-                "detalle": f"Vendiste {_soles(real)} frente a unos {_soles(habitual)} habituales.",
-                "accion": _pregunta("¿Qué pasó?", "¿Por qué cambiaron las ventas ayer?"),
-            }
-        ]
-    return []
-
-
 def detectar_anomalias(db: Session) -> List[Dict[str, Any]]:
     ahora = ahora_lima()
     hallazgos: List[Dict[str, Any]] = []
     for detector in (
-        lambda: _dia_atipico(db, ahora.date()),
         lambda: _montos_inusuales(db, ahora),
         lambda: _precios_fuera_de_catalogo(db, ahora),
         lambda: _cantidades_inusuales(db, ahora),
     ):
         hallazgos += detector()
-    orden = {"alta": 0, "media": 1, "info": 2}
-    hallazgos.sort(key=lambda h: orden[h["nivel"]])
     return hallazgos
 

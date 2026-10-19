@@ -419,7 +419,7 @@ def _reponer_stock(db: Session, prompt: str, limpio: str, usuario) -> Optional[D
 
     catalogo = [(p.id, p.nombre) for p in db.scalars(select(Producto).where(Producto.activo.is_(True))).all()]
     consulta = " ".join(restantes)
-    exactos = [c for c in candidatos(consulta, catalogo) if c[2] >= 1.0]
+    exactos = [c for c in candidatos(consulta, catalogo, True) if c[2] >= 1.0]
     objetivo = normalizar(consulta)
     iguales = [c for c in exactos if normalizar(c[1]) == objetivo]
     if iguales:

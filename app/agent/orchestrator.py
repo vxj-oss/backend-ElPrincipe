@@ -6,6 +6,8 @@ from app.agent.context_builder import ContextBuilder
 from app.agent.actions import responder_accion
 from app.agent.analysis_answers import responder_analisis
 from app.agent.insight_answers import responder_insights
+from app.agent.order_phrasing import normalizar_orden
+from app.agent.planner import clasificar_restantes, es_escritura, separar_pasos
 from app.agent.conversation_context import resolver_seguimiento
 from app.agent.customer_actions import es_crear_cliente, responder_crear_cliente
 from app.agent.pantalla_context import aplicar_pantalla
@@ -77,20 +79,16 @@ class AgentOrchestrator:
     """
 
     @staticmethod
-    def handle_query(
+    def _directo(
         db: Session,
         current_user: Usuario,
         prompt: str,
-        session_id: Optional[int] = None,
-        contexto: Optional[Dict[str, Any]] = None,
-        on_delta: Optional[Any] = None,
-    ) -> Dict[str, Any]:
-        prompt = resolver_seguimiento(db, prompt, session_id)
-        pantalla = contexto.get("pantalla") if isinstance(contexto, dict) else None
-        prompt = aplicar_pantalla(prompt, pantalla)
+        session_id: Optional[int],
+        contexto: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
         es_admin = getattr(current_user, "rol", None) == "administrador"
         directo = None
-        borrador = (contexto or {}).get("borrador") if isinstance(contexto, dict) else None
+        borrador = contexto.get("borrador") if isinstance(contexto, dict) else None
         if borrador and es_edicion(prompt) and not es_crear_cliente(prompt):
             directo = responder_edicion(db, prompt, borrador)
         if directo is None:
@@ -126,6 +124,69 @@ class AgentOrchestrator:
                     or responder_analisis(db, prompt)
                     or responder_rapido(db, prompt, current_user)
                 )
+        return directo
+
+    @staticmethod
+    def _ejecutar_plan(
+        db: Session,
+        current_user: Usuario,
+        pasos: list,
+        session_id: Optional[int],
+        contexto: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        pantalla = contexto.get("pantalla") if isinstance(contexto, dict) else None
+        textos: list = []
+        ultimos_datos = None
+        for i, paso in enumerate(pasos):
+            texto = normalizar_orden(paso)
+            if i == 0:
+                texto = resolver_seguimiento(db, texto, session_id)
+                texto = aplicar_pantalla(texto, pantalla)
+            directo = AgentOrchestrator._directo(db, current_user, texto, session_id, contexto if i == 0 else None)
+            if directo is None:
+                if i == 0:
+                    return None
+                restantes = [{"texto": normalizar_orden(p), "etiqueta": p.strip()[:48], "espera": None} for p in pasos[i:]]
+                return AgentOrchestrator._respuesta_plan(textos, ultimos_datos, restantes)
+            textos.append(directo["respuesta"])
+            datos = directo["datos_estructurados"]
+            if es_escritura(datos):
+                restantes = clasificar_restantes(pasos[i + 1 :], datos)
+                return AgentOrchestrator._respuesta_plan(textos, datos, restantes)
+            if datos:
+                ultimos_datos = datos
+        return AgentOrchestrator._respuesta_plan(textos, ultimos_datos, [])
+
+    @staticmethod
+    def _respuesta_plan(textos: list, datos: Optional[Dict[str, Any]], pendientes: list) -> Dict[str, Any]:
+        if pendientes:
+            datos = dict(datos or {"tipo": "texto"})
+            datos["plan"] = {"pendientes": pendientes}
+        return {
+            "respuesta": "\n\n".join(textos),
+            "datos_estructurados": datos,
+            "modelo_usado": llm_client.model,
+        }
+
+    @staticmethod
+    def handle_query(
+        db: Session,
+        current_user: Usuario,
+        prompt: str,
+        session_id: Optional[int] = None,
+        contexto: Optional[Dict[str, Any]] = None,
+        on_delta: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        pasos = separar_pasos(prompt)
+        if len(pasos) > 1:
+            plan = AgentOrchestrator._ejecutar_plan(db, current_user, pasos, session_id, contexto)
+            if plan:
+                return plan
+        prompt = normalizar_orden(prompt)
+        prompt = resolver_seguimiento(db, prompt, session_id)
+        pantalla = contexto.get("pantalla") if isinstance(contexto, dict) else None
+        prompt = aplicar_pantalla(prompt, pantalla)
+        directo = AgentOrchestrator._directo(db, current_user, prompt, session_id, contexto)
         if directo:
             return {
                 "respuesta": directo["respuesta"],

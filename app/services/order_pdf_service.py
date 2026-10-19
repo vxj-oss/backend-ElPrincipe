@@ -7,7 +7,10 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.core.time import LIMA_TZ, ahora_lima
+from sqlalchemy.orm import object_session
+
 from app.models.order import Pedido
+from app.services.desglose_documentos import ahorro_por_descuento, bloque_totales_pdf, descuento_pactado
 
 CIUDAD = "Trujillo, La Libertad, Perú"
 
@@ -22,6 +25,15 @@ def generar_pedido_pdf(pedido: Pedido) -> io.BytesIO:
     nota = ParagraphStyle("Nota", parent=normal, fontSize=8, textColor=colors.HexColor("#64748b"))
 
     cliente = pedido.cliente
+    sesion = object_session(pedido)
+    porcentaje = descuento_pactado(sesion, pedido.cliente_id) if sesion is not None else 0
+    ahorro = ahorro_por_descuento(
+        [
+            (det.cantidad, det.precio_unitario, det.producto.precio_unitario if det.producto else None)
+            for det in pedido.detalles
+        ],
+        porcentaje,
+    )
     fecha = pedido.fecha_pedido.astimezone(LIMA_TZ).strftime("%d/%m/%Y %H:%M")
 
     filas = [[Paragraph(t, cabecera) for t in ("Producto", "Cant.", "Precio unit.", "Subtotal")]]
@@ -82,10 +94,7 @@ def generar_pedido_pdf(pedido: Pedido) -> io.BytesIO:
         Spacer(1, 14),
         tabla,
         Spacer(1, 10),
-        Paragraph(
-            f"<b>Total: S/ {float(pedido.monto_total or 0):,.2f}</b>",
-            ParagraphStyle("Total", parent=derecha, fontSize=11),
-        ),
+        *bloque_totales_pdf(pedido.monto_total, porcentaje, ahorro),
         Spacer(1, 18),
         Paragraph("Gracias por tu compra.", nota),
     ]

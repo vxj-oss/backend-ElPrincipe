@@ -448,7 +448,7 @@ def _consulta_producto(limpio: str, prompt: str) -> Optional[str]:
 def _stock_precio(db: Session, consulta: str, estricto: bool = True) -> Tuple[Optional[str], Optional[List[Tuple[str, str]]]]:
     productos = list(db.scalars(select(Producto).where(Producto.activo.is_(True))).all())
     por_id = {p.id: p for p in productos}
-    lista = candidatos(consulta, [(p.id, p.nombre) for p in productos])
+    lista = candidatos(consulta, [(p.id, p.nombre) for p in productos], True)
     exactos = [c for c in lista if c[2] >= 1.0]
 
     if not exactos:

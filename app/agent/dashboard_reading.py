@@ -1,22 +1,18 @@
 import time
-from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app.agent.anomalies import detectar_anomalias
 from app.agent.tools import CommercialTools
 from app.core.metas import METAS_INDICADORES
 from app.core.time import ahora_lima
-from app.models.customer_request import SolicitudCliente
 from app.services import analytics_service as an
 
 TTL_SEGUNDOS = 60
 MAX_PUNTOS = 6
 MAX_DETALLE = 4
 DIAS_ALERTA_STOCK = 7
-UMBRAL_CAIDA_ALTA = -20.0
 ORDEN_NIVEL = {"alta": 0, "media": 1, "info": 2, "ok": 3}
 
 _cache: Dict[str, Any] = {"momento": 0.0, "datos": None}
@@ -55,7 +51,7 @@ def _punto_ventas(db: Session, periodo: str, etiqueta: str) -> Optional[Dict[str
         )
         causas = d["subidas_producto"] if sube else d["caidas_producto"]
         clientes = d["subidas_cliente"] if sube else d["caidas_cliente"]
-        nivel = "alta" if pct <= UMBRAL_CAIDA_ALTA else ("media" if pct < 0 else "ok")
+        nivel = "ok" if pct >= 0 else "info"
         tendencia = "sube" if sube else "baja"
         if causas and clientes:
             if sube:
@@ -130,64 +126,93 @@ def _punto_stock(db: Session) -> Optional[Dict[str, Any]]:
     }
 
 
+def _espera(horas: int) -> str:
+    if horas < 1:
+        return "hace menos de una hora"
+    if horas < 24:
+        return f"hace {horas} h"
+    dias = horas // 24
+    return f"hace {dias} {'día' if dias == 1 else 'días'}"
+
+
 def _punto_recompra(db: Session) -> Optional[Dict[str, Any]]:
     filas = an.cadencia_clientes(db, limite=30)
     if not filas:
         return None
     n = len(filas)
-    detalle = [
-        {
-            "texto": f"{f['nombre']} — compra cada {f['intervalo_dias']} días, lleva {f['dias_sin_comprar']} sin comprar",
-            "accion": {"tipo": "pregunta", "etiqueta": "Cotizar", "texto": f"Arma una cotización para {f['nombre']}"},
-        }
-        for f in filas[:MAX_DETALLE]
-    ]
+    detalle = []
+    for f in filas[:MAX_DETALLE]:
+        habituales = an.productos_habituales(db, f["id"], 2)
+        pide = f"suele pedir {' y '.join(habituales)}" if habituales else f"compra cada {f['intervalo_dias']} días"
+        detalle.append(
+            {
+                "texto": f"{f['nombre']} — {pide}",
+                "accion": {"tipo": "pregunta", "etiqueta": "Armar cotización", "texto": f"Hazle a {f['nombre']} lo mismo que la última vez"},
+            }
+        )
+    primero = filas[0]
     return {
         "id": "recompra",
-        "nivel": "media",
+        "nivel": "info",
         "icono": "recompra",
         "valor": f"{n} {'cliente' if n == 1 else 'clientes'}",
-        "sugerencia": f"Escribe hoy a {filas[0]['nombre']} con una cotización de su compra habitual.",
-        "titulo": "Clientes por recomprar",
-        "texto": f"{n} {'cliente ya está' if n == 1 else 'clientes ya están'} en su momento habitual de recompra; el primero es {filas[0]['nombre']}.",
+        "sugerencia": f"Arma con un clic la cotización de {primero['nombre']} con lo que suele pedir.",
+        "titulo": "Clientes con pedido habitual",
+        "texto": f"{n} {'cliente suele' if n == 1 else 'clientes suelen'} repetir su pedido por estas fechas; el primero es {primero['nombre']}.",
         "detalle": detalle,
         "accion": {"tipo": "pregunta", "etiqueta": "Ver quiénes", "texto": "¿A quién le toca comprar?"},
     }
 
 
-def _punto_seguimiento(db: Session) -> Optional[Dict[str, Any]]:
-    n = an.cotizaciones_sin_seguimiento(db)
-    if not n:
+def _punto_por_convertir(db: Session) -> Optional[Dict[str, Any]]:
+    datos = an.cotizaciones_por_convertir(db)
+    if not datos["total"]:
         return None
-    ahora = ahora_lima()
-    filas = db.scalars(
-        select(SolicitudCliente)
-        .options(selectinload(SolicitudCliente.cliente))
-        .where(
-            SolicitudCliente.estado == "Pendiente",
-            SolicitudCliente.fecha_solicitud < ahora - timedelta(hours=24),
-            SolicitudCliente.fecha_solicitud >= ahora - timedelta(days=14),
-        )
-        .order_by(SolicitudCliente.fecha_solicitud.asc())
-        .limit(MAX_DETALLE)
-    ).all()
+    n = datos["total"]
     detalle = [
         {
-            "texto": f"{s.codigo_solicitud} — {s.cliente.razon_social if s.cliente else 'Cliente'}, hace {(ahora - s.fecha_solicitud).days} días",
-            "accion": {"tipo": "pregunta", "etiqueta": "Ver", "texto": f"detalle de la cotización {s.codigo_solicitud}"},
+            "texto": f"{i['codigo']} — {i['cliente']}, {_espera(i['horas'])}",
+            "accion": {"tipo": "pregunta", "etiqueta": "Crear pedido", "texto": f"crea el pedido de la cotización {i['codigo']}"},
         }
-        for s in filas
+        for i in datos["items"]
     ]
+    demora = any(i["horas"] >= 24 for i in datos["items"])
     return {
-        "id": "seguimiento",
-        "nivel": "media",
+        "id": "por_convertir",
+        "nivel": "media" if demora else "info",
         "icono": "seguimiento",
         "valor": f"{n} {'cotización' if n == 1 else 'cotizaciones'}",
-        "sugerencia": "Haz seguimiento por llamada o WhatsApp, empezando por las más antiguas.",
-        "titulo": "Cotizaciones sin seguimiento",
-        "texto": f"{n} {'cotización lleva' if n == 1 else 'cotizaciones llevan'} más de un día sin convertirse en pedido.",
+        "sugerencia": "Conviértelas en pedido con un clic para reducir el tiempo de registro.",
+        "titulo": "Cotizaciones por convertir en pedido",
+        "texto": f"{n} {'cotización está lista' if n == 1 else 'cotizaciones están listas'} para convertirse en pedido.",
         "detalle": detalle,
         "accion": {"tipo": "enlace", "etiqueta": "Abrir cotizaciones", "ruta": "/solicitudes?estado=Pendiente"},
+    }
+
+
+def _punto_por_aprobar(db: Session) -> Optional[Dict[str, Any]]:
+    datos = an.pedidos_por_aprobar(db)
+    if not datos["total"]:
+        return None
+    n = datos["total"]
+    detalle = [
+        {
+            "texto": f"{i['codigo']} — {i['cliente']}, {_soles(i['monto'])}, {_espera(i['horas'])}",
+            "accion": {"tipo": "pregunta", "etiqueta": "Ver", "texto": f"detalle del pedido {i['codigo']}"},
+        }
+        for i in datos["items"]
+    ]
+    demora = datos["items"][0]["horas"] >= 4
+    return {
+        "id": "por_aprobar",
+        "nivel": "media" if demora else "info",
+        "icono": "pedidos",
+        "valor": f"{n} {'pedido' if n == 1 else 'pedidos'}",
+        "sugerencia": "Aprobarlos pronto acorta el tiempo de decisión.",
+        "titulo": "Pedidos esperando aprobación",
+        "texto": f"{n} {'pedido espera' if n == 1 else 'pedidos esperan'} aprobación.",
+        "detalle": detalle,
+        "accion": {"tipo": "pregunta", "etiqueta": "Ver pedidos", "texto": "¿Qué pedidos están pendientes de confirmar?"},
     }
 
 
@@ -254,14 +279,14 @@ def _punto_anomalias(db: Session) -> Optional[Dict[str, Any]]:
     n = len(hallazgos)
     return {
         "id": "anomalias",
-        "nivel": "alta" if any(h["nivel"] == "alta" for h in hallazgos) else "media",
+        "nivel": "media",
         "icono": "anomalias",
         "valor": f"{n} {'dato' if n == 1 else 'datos'}",
-        "sugerencia": "Confirma si fueron correctos y corrígelos antes de cerrar el día.",
-        "titulo": "Datos inusuales",
-        "texto": f"{n} {'dato se aleja' if n == 1 else 'datos se alejan'} de lo habitual en los últimos 14 días: {hallazgos[0]['titulo'].lower()}.",
+        "sugerencia": "Confirma que se digitaron bien; si hubo un error, corrígelo desde el pedido.",
+        "titulo": "Pedidos por verificar",
+        "texto": f"{n} {'dato de pedido conviene verificarse' if n == 1 else 'datos de pedidos conviene verificarlos'} (monto, precio o cantidad): {hallazgos[0]['titulo'].lower()}.",
         "detalle": [{"texto": f"{h['titulo']}. {h['detalle']}", "accion": h.get("accion")} for h in hallazgos[:MAX_DETALLE]],
-        "accion": {"tipo": "pregunta", "etiqueta": "Revisar", "texto": "¿Hay algo raro en mis ventas?"},
+        "accion": {"tipo": "pregunta", "etiqueta": "Revisar", "texto": "¿Hay algo raro en mis pedidos?"},
     }
 
 
@@ -275,8 +300,9 @@ def lectura_dashboard(db: Session, forzar: bool = False) -> Dict[str, Any]:
         lambda: _punto_ventas(db, "semana", "esta semana"),
         lambda: _punto_indicadores(db),
         lambda: _punto_stock(db),
+        lambda: _punto_por_aprobar(db),
+        lambda: _punto_por_convertir(db),
         lambda: _punto_recompra(db),
-        lambda: _punto_seguimiento(db),
         lambda: _punto_anomalias(db),
     ):
         punto = generador()
