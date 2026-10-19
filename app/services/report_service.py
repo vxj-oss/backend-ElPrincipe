@@ -399,6 +399,133 @@ class ReportService:
         return output
 
     @staticmethod
+    def _datos_historial_cliente(db: Session, cliente_id: int):
+        cliente = db.get(Cliente, cliente_id)
+        if cliente is None:
+            return None
+        pedidos = db.scalars(
+            select(Pedido)
+            .options(selectinload(Pedido.detalles).selectinload(DetallePedido.producto))
+            .where(Pedido.cliente_id == cliente_id)
+            .order_by(Pedido.fecha_pedido.desc())
+        ).all()
+        solicitudes = db.scalars(
+            select(SolicitudCliente)
+            .where(SolicitudCliente.cliente_id == cliente_id)
+            .order_by(SolicitudCliente.fecha_solicitud.desc())
+        ).all()
+        confirmados = [p for p in pedidos if p.estado in ("Aprobado", "Entregado")]
+        total = sum(float(p.monto_total or 0) for p in confirmados)
+        productos: Dict[str, List[float]] = {}
+        for p in confirmados:
+            for det in p.detalles:
+                nombre = det.producto.nombre if det.producto else f"Producto #{det.producto_id}"
+                acumulado = productos.setdefault(nombre, [0.0, 0.0])
+                acumulado[0] += float(det.cantidad or 0)
+                acumulado[1] += float(det.subtotal or 0)
+        top_productos = sorted(productos.items(), key=lambda kv: -kv[1][1])
+        fechas = [p.fecha_pedido.astimezone(LIMA_TZ) for p in confirmados]
+        return {
+            "cliente": cliente,
+            "pedidos": pedidos,
+            "solicitudes": solicitudes,
+            "confirmados": confirmados,
+            "total": total,
+            "ticket": total / len(confirmados) if confirmados else 0.0,
+            "productos": top_productos,
+            "primera": min(fechas) if fechas else None,
+            "ultima": max(fechas) if fechas else None,
+        }
+
+    @staticmethod
+    def generate_customer_history_excel(db: Session, cliente_id: int) -> Optional[io.BytesIO]:
+        d = ReportService._datos_historial_cliente(db, cliente_id)
+        if d is None:
+            return None
+        c = d["cliente"]
+        resumen = [
+            ("Cliente", c.razon_social),
+            ("RUC/DNI", c.ruc_dni or "—"),
+            ("Tipo de cliente", str(c.tipo_cliente)),
+            ("Dirección", c.direccion or "—"),
+            ("Teléfono", c.telefono or "—"),
+            ("Pedidos registrados", len(d["pedidos"])),
+            ("Pedidos confirmados", len(d["confirmados"])),
+            ("Total comprado (S/)", round(d["total"], 2)),
+            ("Ticket promedio (S/)", round(d["ticket"], 2)),
+            ("Primera compra", d["primera"].strftime("%d/%m/%Y") if d["primera"] else "—"),
+            ("Última compra", d["ultima"].strftime("%d/%m/%Y") if d["ultima"] else "—"),
+            ("Cotizaciones", len(d["solicitudes"])),
+        ]
+        pedidos = [
+            {
+                "Código": p.codigo_pedido,
+                "Fecha": p.fecha_pedido.astimezone(LIMA_TZ).strftime("%d/%m/%Y %H:%M"),
+                "Estado": p.estado,
+                "Forma de pago": p.forma_pago,
+                "Ítems": len(p.detalles),
+                "Total (S/)": float(p.monto_total or 0),
+            }
+            for p in d["pedidos"]
+        ]
+        productos = [
+            {"Producto": nombre, "Unidades": round(v[0], 2), "Monto (S/)": round(v[1], 2)}
+            for nombre, v in d["productos"]
+        ]
+        cotizaciones = [
+            {
+                "Código": s.codigo_solicitud,
+                "Fecha": s.fecha_solicitud.astimezone(LIMA_TZ).strftime("%d/%m/%Y %H:%M"),
+                "Estado": s.estado,
+            }
+            for s in d["solicitudes"]
+        ]
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            pd.DataFrame(resumen, columns=["Dato", "Valor"]).to_excel(writer, index=False, sheet_name="Resumen")
+            pd.DataFrame(pedidos or [{"Código": "—"}]).to_excel(writer, index=False, sheet_name="Pedidos")
+            pd.DataFrame(productos or [{"Producto": "—"}]).to_excel(writer, index=False, sheet_name="Productos")
+            pd.DataFrame(cotizaciones or [{"Código": "—"}]).to_excel(writer, index=False, sheet_name="Cotizaciones")
+            for hoja in writer.sheets.values():
+                for columna in hoja.columns:
+                    ancho = max(len(str(celda.value or "")) for celda in columna) + 2
+                    hoja.column_dimensions[columna[0].column_letter].width = min(ancho, 48)
+        output.seek(0)
+        return output
+
+    @staticmethod
+    def generate_customer_history_pdf(db: Session, cliente_id: int) -> Optional[io.BytesIO]:
+        d = ReportService._datos_historial_cliente(db, cliente_id)
+        if d is None:
+            return None
+        c = d["cliente"]
+        columnas = ["Código", "Fecha", "Estado", "Forma de pago", "Ítems", "Total S/"]
+        filas = [
+            [
+                p.codigo_pedido,
+                p.fecha_pedido.astimezone(LIMA_TZ).strftime("%d/%m/%Y"),
+                p.estado,
+                p.forma_pago,
+                len(p.detalles),
+                f"{float(p.monto_total or 0):,.2f}",
+            ]
+            for p in d["pedidos"]
+        ] or [["—", "Sin pedidos", "—", "—", "—", "—"]]
+        kpis = [
+            ("Pedidos confirmados", str(len(d["confirmados"])), "#1E3A8A"),
+            ("Total comprado", f"S/ {d['total']:,.2f}", "#15803d"),
+            ("Ticket promedio", f"S/ {d['ticket']:,.2f}", "#7e22ce"),
+            ("Última compra", d["ultima"].strftime("%d/%m/%Y") if d["ultima"] else "—", "#c2410c"),
+        ]
+        graficos = []
+        if d["productos"]:
+            top = {(n[:13] + "." if len(n) > 14 else n): round(v[1], 2) for n, v in d["productos"][:5]}
+            graficos.append(ReportService._grafico_barras(top, "Productos más comprados (S/)"))
+        return ReportService._crear_pdf_base(
+            f"Historial de {c.razon_social}", columnas, filas, kpis=kpis, graficos=graficos
+        )
+
+    @staticmethod
     def generate_order_errors_excel(db: Session, desde=None, hasta=None) -> io.BytesIO:
         stmt = (
             select(DetallePedido)

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.time import LIMA_TZ, ahora_lima
 from app.models.customer_request import SolicitudCliente
 from app.models.product import Producto
+from app.services.desglose_documentos import ahorro_por_descuento, bloque_totales_pdf, descuento_pactado
 
 CIUDAD = "Trujillo, La Libertad, Perú"
 
@@ -29,6 +30,7 @@ def generar_cotizacion_pdf(db: Session, solicitud: SolicitudCliente) -> io.Bytes
 
     filas = [[Paragraph(t, cabecera) for t in ("Producto", "Cant.", "Precio unit.", "Subtotal")]]
     total = Decimal("0")
+    lineas_descuento = []
     for det in solicitud.detalles:
         precio = det.precio_esperado
         if precio is None and det.producto_id:
@@ -36,6 +38,11 @@ def generar_cotizacion_pdf(db: Session, solicitud: SolicitudCliente) -> io.Bytes
             precio = producto.precio_unitario if producto else None
         subtotal = (precio or Decimal("0")) * det.cantidad_solicitada
         total += subtotal
+        if precio is not None and det.producto_id:
+            producto_linea = db.get(Producto, det.producto_id)
+            lineas_descuento.append(
+                (det.cantidad_solicitada, precio, producto_linea.precio_unitario if producto_linea else None)
+            )
         filas.append(
             [
                 Paragraph(det.nombre_producto_solicitado, normal),
@@ -69,6 +76,9 @@ def generar_cotizacion_pdf(db: Session, solicitud: SolicitudCliente) -> io.Bytes
     if cliente and cliente.telefono:
         datos_cliente.append(f"<b>Teléfono:</b> {cliente.telefono}")
 
+    porcentaje = descuento_pactado(db, solicitud.cliente_id)
+    ahorro = ahorro_por_descuento(lineas_descuento, porcentaje)
+
     elementos = [
         Paragraph("<b>EL PRÍNCIPE</b>", estilos["Heading1"]),
         Paragraph(CIUDAD, nota),
@@ -81,7 +91,7 @@ def generar_cotizacion_pdf(db: Session, solicitud: SolicitudCliente) -> io.Bytes
         Spacer(1, 14),
         tabla,
         Spacer(1, 10),
-        Paragraph(f"<b>Total aproximado: S/ {float(total):,.2f}</b>", ParagraphStyle("Total", parent=derecha, fontSize=11)),
+        *bloque_totales_pdf(total, porcentaje, ahorro, "TOTAL APROXIMADO"),
         Spacer(1, 18),
         Paragraph(
             "Documento informativo. Los precios y la disponibilidad están sujetos a confirmación.",

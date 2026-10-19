@@ -88,7 +88,7 @@ def _campo_precio(tipo: str) -> str:
 
 
 def _buscar_en_items(items: List[Dict[str, Any]], texto: str) -> List[int]:
-    lista = candidatos(texto, [(i, it["nombre"]) for i, it in enumerate(items)])
+    lista = candidatos(texto, [(i, it["nombre"]) for i, it in enumerate(items)], True)
     return [c[0] for c in lista if c[2] >= 1.0]
 
 
@@ -175,7 +175,7 @@ def responder_edicion(db: Session, prompt: str, borrador: Dict[str, Any]) -> Opt
         if catalogo is None:
             catalogo = list(db.scalars(select(Producto).where(Producto.activo.is_(True))).all())
         por_id = {p.id: p for p in catalogo}
-        lista = candidatos(texto, [(p.id, p.nombre) for p in catalogo])
+        lista = candidatos(texto, [(p.id, p.nombre) for p in catalogo], True)
         exactos = [c for c in lista if c[2] >= 1.0]
         objetivo = normalizar(texto)
         iguales = [c for c in exactos if normalizar(c[1]) == objetivo]

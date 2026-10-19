@@ -287,7 +287,7 @@ def _separar_entidades(limpio: str) -> List[str]:
 
 
 def _resolver_producto(productos: List[Tuple[int, str]], texto: str) -> Optional[Tuple[List[int], str]]:
-    lista = candidatos(texto, productos)
+    lista = candidatos(texto, productos, True)
     exactos = [c for c in lista if c[2] >= 1.0]
     if not exactos or len(exactos) > 30:
         return None

@@ -40,6 +40,25 @@ SINONIMOS = {
     "jabones": "jabon",
 }
 
+SINONIMOS_PRODUCTO = {
+    "mopa": "trapeador",
+    "mopas": "trapeador",
+    "trapero": "trapeador",
+    "trapeadora": "trapeador",
+    "basurero": "tacho",
+    "basureros": "tacho",
+    "rasqueta": "jalador",
+    "escobilla": "escobillo",
+    "lavavajillas": "lavavajilla",
+    "ph": "papel higienico",
+    "unidad": "und",
+    "unidades": "und",
+    "uni": "und",
+    "unid": "und",
+}
+LARGO_MIN_ERRATA = 6
+LARGO_MIN_ERRATA_DOBLE = 9
+
 MAX_CANDIDATOS = 6
 MAX_OPCIONES = 40
 COBERTURA_SEGURA = 1.0
@@ -83,6 +102,46 @@ def tokens(texto: str) -> List[str]:
     return [SINONIMOS.get(t, t) for t in normalizar(texto).split() if t not in PALABRAS_VACIAS]
 
 
+def _tokens_tolerantes(texto: str) -> List[str]:
+    base = re.sub(r"(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)", r"\1 \2", normalizar(texto))
+    resultado: List[str] = []
+    for t in base.split():
+        if t in PALABRAS_VACIAS:
+            continue
+        reemplazo = SINONIMOS_PRODUCTO.get(SINONIMOS.get(t, t), SINONIMOS.get(t, t))
+        resultado.extend(reemplazo.split())
+    return resultado
+
+
+def _distancia(a: str, b: str) -> int:
+    filas = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
+    for i in range(len(a) + 1):
+        filas[i][0] = i
+    for j in range(len(b) + 1):
+        filas[0][j] = j
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            costo = 0 if a[i - 1] == b[j - 1] else 1
+            filas[i][j] = min(filas[i - 1][j] + 1, filas[i][j - 1] + 1, filas[i - 1][j - 1] + costo)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                filas[i][j] = min(filas[i][j], filas[i - 2][j - 2] + 1)
+    return filas[len(a)][len(b)]
+
+
+def _token_tolerante(consulta: str, candidato: str) -> bool:
+    if _token_coincide(consulta, candidato):
+        return True
+    if re.fullmatch(r"\d+(?:\.\d+)?", consulta) and re.fullmatch(rf"{re.escape(consulta)}[a-z]+", candidato):
+        return True
+    if consulta.isalpha() and candidato.isalpha() and consulta[0] == candidato[0]:
+        menor = min(len(consulta), len(candidato))
+        if menor >= LARGO_MIN_ERRATA_DOBLE:
+            return _distancia(consulta, candidato) <= 2
+        if menor >= LARGO_MIN_ERRATA:
+            return _distancia(consulta, candidato) <= 1
+    return False
+
+
 def _singular(token: str) -> str:
     if token.isdigit():
         return token
@@ -109,33 +168,52 @@ def _token_coincide(consulta: str, candidato: str) -> bool:
     return SequenceMatcher(None, consulta, candidato).ratio() >= 0.9
 
 
-def puntaje(consulta: str, candidato: str) -> Tuple[float, float]:
-    tq = tokens(consulta)
-    tp = tokens(candidato)
+def _coincidentes_tolerantes(tq: List[str], tp: List[str]) -> int:
+    total = 0
+    i = 0
+    while i < len(tq):
+        if i + 1 < len(tq) and any(_token_tolerante(tq[i] + tq[i + 1], p) for p in tp):
+            total += 2
+            i += 2
+            continue
+        if any(_token_tolerante(tq[i], p) for p in tp):
+            total += 1
+        elif any(_token_tolerante(tq[i], tp[j] + tp[j + 1]) for j in range(len(tp) - 1)):
+            total += 1
+        i += 1
+    return min(total, len(tq))
+
+
+def puntaje(consulta: str, candidato: str, tolerante: bool = False) -> Tuple[float, float]:
+    tq = _tokens_tolerantes(consulta) if tolerante else tokens(consulta)
+    tp = _tokens_tolerantes(candidato) if tolerante else tokens(candidato)
     if not tq or not tp:
         return 0.0, 0.0
-    coincidentes = sum(1 for q in tq if any(_token_coincide(q, p) for p in tp))
+    if tolerante:
+        coincidentes = _coincidentes_tolerantes(tq, tp)
+    else:
+        coincidentes = sum(1 for q in tq if any(_token_coincide(q, p) for p in tp))
     cobertura = coincidentes / len(tq)
     jaccard = coincidentes / (len(tq) + len(tp) - coincidentes)
     ratio = SequenceMatcher(None, " ".join(tq), " ".join(tp)).ratio()
     return cobertura, 0.5 * cobertura + 0.2 * jaccard + 0.3 * ratio
 
 
-def mejor_coincidencia(consulta: str, opciones: Sequence[Tuple[Any, str]]) -> Optional[Any]:
+def mejor_coincidencia(consulta: str, opciones: Sequence[Tuple[Any, str]], tolerante: bool = False) -> Optional[Any]:
     mejor = None
     mejor_puntaje = 0.0
     for identificador, nombre in opciones:
-        cobertura, total = puntaje(consulta, nombre)
+        cobertura, total = puntaje(consulta, nombre, tolerante)
         if cobertura >= UMBRAL_COBERTURA and total >= UMBRAL_PUNTAJE and total > mejor_puntaje:
             mejor = identificador
             mejor_puntaje = total
     return mejor
 
 
-def candidatos(consulta: str, opciones: Sequence[Tuple[Any, str]]) -> List[Tuple[Any, str, float, float]]:
+def candidatos(consulta: str, opciones: Sequence[Tuple[Any, str]], tolerante: bool = False) -> List[Tuple[Any, str, float, float]]:
     resultado = []
     for identificador, nombre in opciones:
-        cobertura, total = puntaje(consulta, nombre)
+        cobertura, total = puntaje(consulta, nombre, tolerante)
         if cobertura > 0:
             resultado.append((identificador, nombre, cobertura, total))
     resultado.sort(key=lambda fila: fila[3], reverse=True)
@@ -223,7 +301,7 @@ class NotaCotizacionService:
         opciones_por_indice: Dict[int, List[Tuple[Any, str, float, float]]] = {}
         por_consultar: List[Dict[str, Any]] = []
         for indice, (texto_producto, _) in enumerate(pedidos):
-            lista = candidatos(texto_producto, opciones_producto)
+            lista = candidatos(texto_producto, opciones_producto, True)
             exactos = [c for c in lista if c[2] >= COBERTURA_SEGURA]
             if len(exactos) == 1:
                 resueltos[indice] = exactos[0][0]
@@ -249,7 +327,7 @@ class NotaCotizacionService:
                 elegido = elegidas[indice]
                 resueltos[indice] = elegido if elegido in ids_validos else None
             else:
-                resueltos[indice] = mejor_coincidencia(pedidos[indice][0], opciones_producto)
+                resueltos[indice] = mejor_coincidencia(pedidos[indice][0], opciones_producto, True)
 
         items: List[NotaCotizacionItem] = []
         sin_coincidencia: List[str] = []

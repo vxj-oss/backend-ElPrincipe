@@ -89,7 +89,7 @@ def _buscar_producto(
     filtro = select(Producto) if incluir_inactivos else select(Producto).where(Producto.activo.is_(True))
     productos = list(db.scalars(filtro).all())
     por_id = {p.id: p for p in productos}
-    lista = candidatos(consulta, [(p.id, p.nombre) for p in productos])
+    lista = candidatos(consulta, [(p.id, p.nombre) for p in productos], True)
     exactos = [c for c in lista if c[2] >= 1.0]
     objetivo = normalizar(consulta)
     iguales = [c for c in exactos if normalizar(c[1]) == objetivo]

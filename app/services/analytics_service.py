@@ -405,6 +405,53 @@ def cotizaciones_sin_seguimiento(db: Session) -> int:
     )
 
 
+def cotizaciones_por_convertir(db: Session, limite: int = 4) -> Dict[str, Any]:
+    ahora = ahora_lima()
+    condicion = (
+        SolicitudCliente.estado == "Pendiente",
+        SolicitudCliente.fecha_solicitud >= ahora - timedelta(days=14),
+    )
+    total = int(db.scalar(select(func.count(SolicitudCliente.id)).where(*condicion)) or 0)
+    filas = db.execute(
+        select(SolicitudCliente.codigo_solicitud, Cliente.razon_social, SolicitudCliente.fecha_solicitud)
+        .join(Cliente, Cliente.id == SolicitudCliente.cliente_id)
+        .where(*condicion)
+        .order_by(SolicitudCliente.fecha_solicitud.asc())
+        .limit(limite)
+    ).all()
+    return {
+        "total": total,
+        "items": [
+            {"codigo": codigo, "cliente": cliente, "horas": max(0, int((ahora - fecha).total_seconds() // 3600))}
+            for codigo, cliente, fecha in filas
+        ],
+    }
+
+
+def pedidos_por_aprobar(db: Session, limite: int = 4) -> Dict[str, Any]:
+    ahora = ahora_lima()
+    total = int(db.scalar(select(func.count(Pedido.id)).where(Pedido.estado == "Pendiente")) or 0)
+    filas = db.execute(
+        select(Pedido.codigo_pedido, Cliente.razon_social, Pedido.fecha_pedido, Pedido.monto_total)
+        .join(Cliente, Cliente.id == Pedido.cliente_id)
+        .where(Pedido.estado == "Pendiente")
+        .order_by(Pedido.fecha_pedido.asc())
+        .limit(limite)
+    ).all()
+    return {
+        "total": total,
+        "items": [
+            {
+                "codigo": codigo,
+                "cliente": cliente,
+                "horas": max(0, int((ahora - fecha).total_seconds() // 3600)),
+                "monto": float(monto or 0),
+            }
+            for codigo, cliente, fecha, monto in filas
+        ],
+    }
+
+
 def productos_habituales(db: Session, cliente_id: int, cantidad: int = 2) -> List[str]:
     filas = db.execute(
         select(Producto.nombre, func.sum(DetallePedido.cantidad))

@@ -1,7 +1,10 @@
 ﻿from datetime import date, datetime, time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+import re
+import unicodedata
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -68,6 +71,47 @@ def download_inventory_excel(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=inventario.xlsx"},
+    )
+
+
+def _nombre_archivo(db: Session, cliente_id: int) -> str:
+    from app.models.customer import Cliente
+
+    cliente = db.get(Cliente, cliente_id)
+    base = unicodedata.normalize("NFKD", cliente.razon_social if cliente else "cliente")
+    base = re.sub(r"[^A-Za-z0-9]+", "_", base.encode("ascii", "ignore").decode()).strip("_").lower()
+    return f"historial_{base or 'cliente'}"
+
+
+@router.get("/customer-history/excel", summary="Descargar el historial de un cliente en Excel")
+def download_customer_history_excel(
+    cliente_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    buffer = ReportService.generate_customer_history_excel(db, cliente_id)
+    if buffer is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={_nombre_archivo(db, cliente_id)}.xlsx"},
+    )
+
+
+@router.get("/customer-history/pdf", summary="Descargar el historial de un cliente en PDF")
+def download_customer_history_pdf(
+    cliente_id: int = Query(..., ge=1),
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    buffer = ReportService.generate_customer_history_pdf(db, cliente_id)
+    if buffer is None:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={_nombre_archivo(db, cliente_id)}.pdf"},
     )
 
 

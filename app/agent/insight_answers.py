@@ -11,7 +11,8 @@ from app.agent.anomalies import detectar_anomalias
 from app.agent.dashboard_reading import (
     _punto_indicadores,
     _punto_recompra,
-    _punto_seguimiento,
+    _punto_por_aprobar,
+    _punto_por_convertir,
     _punto_stock,
     _punto_ventas,
 )
@@ -567,17 +568,17 @@ def _responder_venta_cruzada(db: Session, prompt: str, limpio: str) -> Dict[str,
 def _responder_anomalias(db: Session) -> Dict[str, Any]:
     hallazgos = detectar_anomalias(db)
     explicacion = _explicacion(
-        "Comparé los últimos 14 días contra el comportamiento habitual de los 90 días anteriores: montos de pedidos, precios contra el catálogo, cantidades y ventas del día.",
-        ["Pedidos y su detalle", "Precios del catálogo", "Ventas por día de la semana"],
+        "Comparé los últimos 14 días contra el comportamiento habitual de los 90 días anteriores: montos de pedidos, precios contra el catálogo y cantidades.",
+        ["Pedidos y su detalle", "Precios del catálogo"],
         "Un dato es inusual si se aleja mucho de lo habitual (montos: más de 2.5 desviaciones o 3 veces la mediana; precios: ±30 % del catálogo; cantidades: 5 veces lo normal)",
         "últimos 14 días",
     )
     if not hallazgos:
         return _resultado(
-            "No encontré nada fuera de lo normal en los últimos 14 días: montos, precios, cantidades y ventas del día están dentro de lo habitual.",
+            "Todo en orden: en los últimos 14 días los montos, precios y cantidades de tus pedidos están dentro de lo habitual.",
             {"tipo": "texto", "explicacion": explicacion},
         )
-    lineas = [f"Encontré {_pl(len(hallazgos), 'cosa', 'cosas')} que vale la pena revisar:"]
+    lineas = [f"Conviene verificar {_pl(len(hallazgos), 'dato', 'datos')} de tus pedidos:"]
     acciones: List[Dict[str, Any]] = []
     vistas = set()
     for h in hallazgos:
@@ -586,7 +587,7 @@ def _responder_anomalias(db: Session) -> Dict[str, Any]:
         if accion and (accion["etiqueta"], accion["texto"]) not in vistas:
             vistas.add((accion["etiqueta"], accion["texto"]))
             acciones.append(accion)
-    lineas.append("Sugerencia: confirma con el vendedor o el cliente si fueron correctos; si no, corrígelos antes de cerrar el día.")
+    lineas.append("Sugerencia: confirma que se digitaron bien; si hubo un error, corrígelo desde el pedido.")
     return _resultado("\n".join(lineas), {"tipo": "analisis", "acciones": acciones[:4], "explicacion": explicacion})
 
 
@@ -624,17 +625,18 @@ def _informe_semanal(db: Session) -> Dict[str, Any]:
 
     atencion: List[str] = []
     sugerencias: List[str] = []
-    for generador in (_punto_indicadores, _punto_stock, _punto_recompra, _punto_seguimiento):
+    for generador in (_punto_indicadores, _punto_stock, _punto_por_aprobar, _punto_por_convertir, _punto_recompra):
         punto = generador(db)
         if not punto:
             continue
-        if punto["nivel"] != "ok":
+        if punto["nivel"] in ("alta", "media"):
             atencion.append(punto["texto"])
+        if punto["nivel"] != "ok":
             sugerencias.append(punto["sugerencia"])
     anomalias = detectar_anomalias(db)
     if anomalias:
-        atencion.append(f"{_pl(len(anomalias), 'dato inusual', 'datos inusuales')} por revisar (montos, precios o cantidades fuera de lo habitual).")
-        sugerencias.append("Revisa los datos inusuales antes de cerrar la semana.")
+        atencion.append(f"{_pl(len(anomalias), 'dato de pedido', 'datos de pedidos')} por verificar (monto, precio o cantidad).")
+        sugerencias.append("Verifica los datos de pedidos señalados para mantener el registro limpio.")
     if ventas and ventas["sugerencia"] not in ("Registra más ventas en el periodo para poder comparar.",):
         sugerencias.insert(0, ventas["sugerencia"])
     if atencion:
