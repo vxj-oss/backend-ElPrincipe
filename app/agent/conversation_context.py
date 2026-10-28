@@ -39,6 +39,11 @@ PAT_REFERENCIA_CLIENTE = re.compile(
     r"|\bque (?:lleva|compra|suele)\b|\bsus (?:compras|pedidos|cotizaciones)\b"
 )
 PAT_REFERENCIA_CODIGO = re.compile(r"\b(?:ese|esa|dicho|dicha|el mismo|la misma)\s+(?:pedido|cotizacion)\b")
+PAT_ACCION_SOBRE_ULTIMO = re.compile(
+    r"\b(?:pas\w*|convi\w*|convert\w*|hazl\w+|haz|aprueb\w*|entreg\w*|descarg\w*|imprim\w*|cancel\w*|anul\w*|marca\w*|cambia\w*)\b"
+)
+PAT_DESTINO_PEDIDO = re.compile(r"\bpedido\b")
+PAT_ESTADO_PEDIDO = re.compile(r"\b(?:aprob\w*|aprueb\w*|entreg\w*|pendiente|cancel\w*|anul\w*)\b")
 ORDINALES = {
     "1": 0, "uno": 0, "primero": 0, "primer": 0, "primera": 0,
     "2": 1, "dos": 1, "segundo": 1, "segunda": 1,
@@ -208,6 +213,29 @@ def _referencia_codigo(prompt: str, limpio: str, mensajes: List[Tuple[str, str]]
     return None
 
 
+def _accion_sobre_ultimo(
+    db: Session, prompt: str, limpio: str, mensajes: List[Tuple[str, str]]
+) -> Optional[str]:
+    if PAT_CODIGO.search(prompt) or not PAT_ACCION_SOBRE_ULTIMO.search(limpio):
+        return None
+    cliente, dudosos = _buscar_cliente_en_texto(db, prompt)
+    if cliente or dudosos:
+        return None
+    if PAT_ESTADO_PEDIDO.search(limpio):
+        preferido = "PED"
+    elif PAT_DESTINO_PEDIDO.search(limpio):
+        preferido = "COT"
+    else:
+        preferido = None
+    for _, contenido in reversed(mensajes):
+        for encontrado in reversed(list(PAT_CODIGO.finditer(contenido))):
+            tipo = encontrado.group(1).upper()
+            codigo = f"{tipo}-{encontrado.group(2).upper()}"
+            if preferido is None or tipo == preferido:
+                return f"{prompt} {codigo}"
+    return None
+
+
 def resolver_seguimiento(db: Session, prompt: str, session_id: Optional[int]) -> str:
     mensajes = ContextBuilder.get_recent_messages(db, session_id, prompt, limit=6)
     if not mensajes:
@@ -227,5 +255,6 @@ def resolver_seguimiento(db: Session, prompt: str, session_id: Optional[int]) ->
         or _cambio_cliente_o_producto(db, limpio, previos_usuario)
         or _referencia_cliente(db, prompt, limpio, mensajes)
         or _referencia_codigo(prompt, limpio, mensajes)
+        or _accion_sobre_ultimo(db, prompt, limpio, mensajes)
         or prompt
     )
