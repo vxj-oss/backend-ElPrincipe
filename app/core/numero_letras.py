@@ -49,4 +49,4 @@ def monto_en_letras(monto) -> str:
     valor = Decimal(str(monto or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     entero = int(valor)
     centimos = int((valor - entero) * 100)
-    return f"SON: {entero_a_letras(entero)} CON {centimos:02d}/100 SOLES"
+    return f"SON: {entero_a_letras(entero)} Y {centimos:02d}/100 SOLES"

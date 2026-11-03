@@ -8,6 +8,7 @@ from app.models.user import Usuario
 from app.schemas.customer import CustomerCreate, CustomerResponse, CustomerUpdate
 from app.services.customer_profile_service import obtener_ficha
 from app.services.customer_service import CustomerService
+from app.services.documento_service import ErrorConsultaDocumento, consultar_documento
 from app.services.history_service import HistoryService
 
 router = APIRouter(prefix="/customers", tags=["Clientes"])
@@ -25,6 +26,17 @@ def list_customers(
     return CustomerService.get_all(
         db, estado=estado, search=search, skip=skip, limit=limit
     )
+
+
+@router.get("/consulta-documento", summary="Consultar datos de un RUC o DNI")
+def consulta_documento(
+    numero: str,
+    _: Usuario = Depends(get_current_active_user),
+):
+    try:
+        return consultar_documento(numero)
+    except ErrorConsultaDocumento as e:
+        raise HTTPException(status_code=e.estado, detail=e.mensaje)
 
 
 @router.get("/{customer_id}/ficha", response_model=Dict[str, Any], summary="Ficha comercial del cliente")

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
     API_V1_STR: str = "/api/v1"
+    DECOLECTA_API_TOKEN: str = ""
 
     DATABASE_URL: str
 

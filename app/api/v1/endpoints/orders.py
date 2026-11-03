@@ -9,6 +9,7 @@ from app.models.user import Usuario
 from app.schemas.order import OrderCreate, OrderResponse, OrderUpdate
 from app.services.history_service import HistoryService
 from app.services.order_pdf_service import generar_pedido_pdf
+from app.services.enlace_ticket import token_ticket
 from app.services.ticket_service import generar_ticket_pedido
 from app.services.order_service import OrderService
 
@@ -55,6 +56,7 @@ def get_order(
 @router.get("/{order_id}/ticket", summary="Descargar el pedido como ticket de 80 mm")
 def download_order_ticket(
     order_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     _: Usuario = Depends(get_current_active_user),
 ):
@@ -65,7 +67,7 @@ def download_order_ticket(
             detail="Pedido no encontrado",
         )
     return StreamingResponse(
-        generar_ticket_pedido(order),
+        generar_ticket_pedido(order, str(request.url_for("ticket_publico", token=token_ticket(order.id)))),
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename={order.codigo_pedido}-ticket.pdf"},
     )
