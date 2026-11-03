@@ -5,10 +5,12 @@ import re
 import unicodedata
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.time import ahora_lima
+from app.services.cierre_ticket_service import generar_ticket_cierre, resumen_ventas_dia
 from app.services.day_close_service import generar_cierre_dia_pdf
 from app.services.restock_service import generar_reposicion_excel
 from app.api.deps import get_current_active_user
@@ -219,6 +221,55 @@ def download_cierre_dia_pdf(
         buffer,
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=cierre_dia_{dia.isoformat()}.pdf"},
+    )
+
+
+@router.get("/cierre-dia/resumen", summary="Resumen de productos vendidos en el día para verificar antes de imprimir")
+def cierre_dia_resumen(
+    fecha: Optional[date] = None,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    return resumen_ventas_dia(db, fecha)
+
+
+@router.get("/cierre-dia/ticket", summary="Ticket de 80 mm con el resumen de ventas del día")
+def download_cierre_dia_ticket(
+    fecha: Optional[date] = None,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    dia = fecha or ahora_lima().date()
+    return StreamingResponse(
+        generar_ticket_cierre(db, dia),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=cierre_dia_{dia.isoformat()}-ticket.pdf"},
+    )
+
+
+class LineaCierre(BaseModel):
+    nombre: str = Field(min_length=1, max_length=200)
+    cantidad: int = Field(ge=1, le=100000)
+    precio_unitario: float = Field(ge=0, le=1000000)
+
+
+class TicketCierreRequest(BaseModel):
+    fecha: Optional[date] = None
+    lineas: list[LineaCierre] = Field(max_length=300)
+
+
+@router.post("/cierre-dia/ticket", summary="Ticket de cierre con las líneas revisadas o editadas (no modifica datos)")
+def post_cierre_dia_ticket(
+    datos: TicketCierreRequest,
+    db: Session = Depends(get_db),
+    _: Usuario = Depends(get_current_active_user),
+):
+    dia = datos.fecha or ahora_lima().date()
+    lineas = [l.model_dump() for l in datos.lineas]
+    return StreamingResponse(
+        generar_ticket_cierre(db, dia, lineas),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=cierre_dia_{dia.isoformat()}-ticket.pdf"},
     )
 
 
