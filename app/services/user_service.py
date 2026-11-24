@@ -69,6 +69,7 @@ class UserService:
             clave_hash=get_password_hash(user_in.password),
             nombre_completo=user_in.nombre_completo,
             correo=user_in.correo,
+            telefono=user_in.telefono,
             rol=user_in.rol,
             esta_activo=user_in.esta_activo,
         )

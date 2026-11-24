@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.commercial_term_failure import (
@@ -32,9 +32,9 @@ class OrderCreate(BaseModel):
     codigo_pedido: Optional[str] = None
     fecha_pedido: Optional[datetime] = None
     fecha_entrega: Optional[datetime] = None
-    forma_pago: str = "Contado"
-    estado: Optional[str] = "Pendiente"
-    observaciones: Optional[str] = None
+    forma_pago: str = Field(default="Contado", max_length=50)
+    estado: Optional[Literal["Pendiente", "Aprobado", "Entregado", "Cancelado"]] = "Pendiente"
+    observaciones: Optional[str] = Field(default=None, max_length=1000)
     hora_apertura_modal: Optional[datetime] = None
     items: List[OrderItemCreate] = []
     auditoria_condicion: Optional[CommercialTermFailureCreate] = None
@@ -46,8 +46,8 @@ class OrderUpdate(BaseModel):
     condicion_comercial_id: Optional[int] = None
     fecha_pedido: Optional[datetime] = None
     fecha_entrega: Optional[datetime] = None
-    forma_pago: Optional[str] = None
-    estado: Optional[str] = None
+    forma_pago: Optional[str] = Field(default=None, max_length=50)
+    estado: Optional[Literal["Pendiente", "Aprobado", "Entregado", "Cancelado"]] = None
     monto_total: Optional[Decimal] = Field(default=None, ge=0, decimal_places=2)
     observaciones: Optional[str] = None
     items: Optional[List[OrderItemCreate]] = None
