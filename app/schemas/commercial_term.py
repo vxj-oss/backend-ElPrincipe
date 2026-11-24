@@ -9,8 +9,8 @@ from app.schemas.customer import CustomerResponse
 class CommercialTermBase(BaseModel):
     cliente_id: int
     tipo_condicion: Literal["Credito", "Descuento", "Forma_Pago"]
-    dias_plazo_pactados: Optional[int] = None
-    porcentaje_descuento: Optional[Decimal] = None
+    dias_plazo_pactados: Optional[int] = Field(default=None, ge=0, le=365)
+    porcentaje_descuento: Optional[Decimal] = Field(default=None, ge=0, le=100)
     forma_pago_pactada: Optional[str] = Field(default=None, max_length=50)
 
     @model_validator(mode="after")
@@ -31,8 +31,8 @@ class CommercialTermCreate(CommercialTermBase):
 class CommercialTermUpdate(BaseModel):
     cliente_id: Optional[int] = None
     tipo_condicion: Optional[Literal["Credito", "Descuento", "Forma_Pago"]] = None
-    dias_plazo_pactados: Optional[int] = None
-    porcentaje_descuento: Optional[Decimal] = None
+    dias_plazo_pactados: Optional[int] = Field(default=None, ge=0, le=365)
+    porcentaje_descuento: Optional[Decimal] = Field(default=None, ge=0, le=100)
     forma_pago_pactada: Optional[str] = Field(default=None, max_length=50)
 
 

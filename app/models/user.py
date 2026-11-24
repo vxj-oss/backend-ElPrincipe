@@ -27,6 +27,7 @@ class Usuario(Base):
         nullable=False,
         default="asesor_comercial",
     )
+    telefono: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     esta_activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     intentos_fallidos: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
     bloqueado_hasta: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

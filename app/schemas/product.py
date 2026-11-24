@@ -8,14 +8,14 @@ from app.schemas.category import CategoryResponse
 
 class ProductBase(BaseModel):
     categoria_id: int
-    sku: str = Field(..., max_length=50)
-    nombre: str = Field(..., max_length=200)
+    sku: str = Field(..., min_length=1, max_length=50)
+    nombre: str = Field(..., min_length=2, max_length=200)
     descripcion: Optional[str] = None
-    unidad_medida: str = Field(..., max_length=100)
-    precio_unitario: Decimal = Field(..., ge=0, decimal_places=2)
-    precio_costo: Decimal = Field(..., ge=0, decimal_places=2)
-    stock_actual: int = Field(default=0, ge=0)
-    stock_minimo: int = Field(default=5, ge=0)
+    unidad_medida: str = Field(..., min_length=1, max_length=100)
+    precio_unitario: Decimal = Field(..., ge=0, le=Decimal("9999999.99"), decimal_places=2)
+    precio_costo: Decimal = Field(..., ge=0, le=Decimal("9999999.99"), decimal_places=2)
+    stock_actual: int = Field(default=0, ge=0, le=1_000_000)
+    stock_minimo: int = Field(default=5, ge=0, le=1_000_000)
     nivel_rotacion: Literal["Alta", "Media", "Baja"] = "Media"
     activo: bool = True
 
@@ -30,10 +30,10 @@ class ProductUpdate(BaseModel):
     nombre: Optional[str] = Field(None, max_length=200)
     descripcion: Optional[str] = None
     unidad_medida: Optional[str] = Field(None, max_length=100)
-    precio_unitario: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    precio_costo: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
-    stock_actual: Optional[int] = Field(None, ge=0)
-    stock_minimo: Optional[int] = Field(None, ge=0)
+    precio_unitario: Optional[Decimal] = Field(None, ge=0, le=Decimal("9999999.99"), decimal_places=2)
+    precio_costo: Optional[Decimal] = Field(None, ge=0, le=Decimal("9999999.99"), decimal_places=2)
+    stock_actual: Optional[int] = Field(None, ge=0, le=1_000_000)
+    stock_minimo: Optional[int] = Field(None, ge=0, le=1_000_000)
     nivel_rotacion: Optional[Literal["Alta", "Media", "Baja"]] = None
 
 

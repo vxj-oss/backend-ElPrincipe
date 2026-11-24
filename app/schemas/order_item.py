@@ -15,8 +15,8 @@ class OrderItemBase(BaseModel):
 
 class OrderItemCreate(BaseModel):
     producto_id: int
-    cantidad: int = Field(default=1, gt=0)
-    precio_unitario: Decimal = Field(..., gt=0, decimal_places=2)
+    cantidad: int = Field(default=1, gt=0, le=100000)
+    precio_unitario: Decimal = Field(..., gt=0, le=Decimal("9999999.99"), decimal_places=2)
     subtotal: Optional[Decimal] = None
     tiene_error: bool = False
     tipo_error: Optional[str] = "Ninguno"

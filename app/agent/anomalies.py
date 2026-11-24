@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.desglose_documentos import descuento_pactado
 from app.core.time import ahora_lima
 from app.models.customer import Cliente
 from app.models.order import Pedido
@@ -67,14 +68,20 @@ def _montos_inusuales(db: Session, ahora) -> List[Dict[str, Any]]:
 def _precios_fuera_de_catalogo(db: Session, ahora) -> List[Dict[str, Any]]:
     corte = ahora - timedelta(days=DIAS_REVISION)
     filas = db.execute(
-        select(Pedido.codigo_pedido, Producto.nombre, DetallePedido.precio_unitario, Producto.precio_unitario)
+        select(
+            Pedido.codigo_pedido, Producto.nombre, DetallePedido.precio_unitario, Producto.precio_unitario, Pedido.cliente_id
+        )
         .join(DetallePedido, DetallePedido.pedido_id == Pedido.id)
         .join(Producto, Producto.id == DetallePedido.producto_id)
         .where(Pedido.estado != "Cancelado", Pedido.fecha_pedido >= corte)
     ).all()
+    descuentos: Dict[int, float] = {}
     hallazgos = []
-    for codigo, producto, precio, catalogo in filas:
-        precio, catalogo = float(precio), float(catalogo)
+    for codigo, producto, precio, catalogo, cliente_id in filas:
+        if cliente_id not in descuentos:
+            descuentos[cliente_id] = float(descuento_pactado(db, cliente_id))
+        precio = float(precio)
+        catalogo = float(catalogo) * (100 - descuentos[cliente_id]) / 100
         if catalogo <= 0:
             continue
         desvio = (precio - catalogo) / catalogo

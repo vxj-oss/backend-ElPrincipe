@@ -3,6 +3,8 @@ from datetime import datetime
 from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.schemas.customer import _validar_telefono, _vacio_a_none
+
 _UPPER = re.compile(r"[A-Z]")
 _LOWER = re.compile(r"[a-z]")
 _DIGIT = re.compile(r"\d")
@@ -27,11 +29,15 @@ class UserBase(BaseModel):
     nombre_usuario: str = Field(..., max_length=50)
     nombre_completo: str = Field(..., max_length=150)
     correo: EmailStr
+    telefono: Optional[str] = Field(None, max_length=20)
     rol: Literal["administrador", "asesor_comercial"] = "asesor_comercial"
     esta_activo: bool = True
 
 
 class UserCreate(UserBase):
+    _v_tel_vacio = field_validator("telefono", mode="before")(_vacio_a_none)
+    _v_tel = field_validator("telefono")(_validar_telefono)
+
     password: str = Field(..., min_length=8, max_length=100)
 
     @field_validator("password")
@@ -39,14 +45,25 @@ class UserCreate(UserBase):
     def _check_password(cls, v: str) -> str:
         return _validate_password_complexity(v)
 
+    @field_validator("nombre_usuario")
+    @classmethod
+    def _check_usuario(cls, v: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9._-]{3,50}", v):
+            raise ValueError("El usuario debe tener de 3 a 50 caracteres: letras, números, punto, guion o guion bajo")
+        return v
+
 
 class UserUpdate(BaseModel):
     nombre_usuario: Optional[str] = Field(None, max_length=50)
     nombre_completo: Optional[str] = Field(None, max_length=150)
     correo: Optional[EmailStr] = None
+    telefono: Optional[str] = Field(None, max_length=20)
     rol: Optional[Literal["administrador", "asesor_comercial"]] = None
     esta_activo: Optional[bool] = None
     password: Optional[str] = Field(None, min_length=8, max_length=100)
+
+    _v_tel_vacio = field_validator("telefono", mode="before")(_vacio_a_none)
+    _v_tel = field_validator("telefono")(_validar_telefono)
 
     @field_validator("password")
     @classmethod

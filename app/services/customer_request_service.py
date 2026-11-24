@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.agent.llm_client import llm_client
 from app.core.time import LIMA_TZ, ahora_lima
 from app.models.commercial_term import CondicionComercial
+from app.services.desglose_documentos import descuento_pactado
 from app.models.customer import Cliente
 from app.models.customer_request import SolicitudCliente
 from app.models.customer_request_item import SolicitudClienteDetalle
@@ -153,6 +154,7 @@ class SolicitudClienteService:
         if cliente and cliente.estado != "Activo":
             observaciones.append("El cliente está inactivo.")
 
+        descuento = descuento_pactado(db, solicitud.cliente_id)
         detalles_data = []
         for det in solicitud.detalles:
             prod = db.get(Producto, det.producto_id) if det.producto_id else None
@@ -169,11 +171,18 @@ class SolicitudClienteService:
                         f"Stock insuficiente para '{prod.nombre}': disponible {prod.stock_actual}, solicitado {det.cantidad_solicitada}."
                     )
                 if det.precio_esperado and prod.precio_unitario:
-                    diferencia = abs(det.precio_esperado - prod.precio_unitario) / prod.precio_unitario
+                    factor = (Decimal("100") - descuento) / Decimal("100")
+                    referencia = (prod.precio_unitario * factor).quantize(Decimal("0.01"))
+                    diferencia = abs(det.precio_esperado - referencia) / referencia if referencia else Decimal("0")
                     if diferencia > Decimal("0.10"):
-                        observaciones.append(
-                            f"El precio esperado de '{prod.nombre}' ({det.precio_esperado}) difiere más de 10% del precio vigente ({prod.precio_unitario})."
-                        )
+                        if descuento > 0:
+                            observaciones.append(
+                                f"El precio esperado de '{prod.nombre}' ({det.precio_esperado}) difiere más de 10% del precio con el descuento pactado de {descuento:.0f}% ({referencia})."
+                            )
+                        else:
+                            observaciones.append(
+                                f"El precio esperado de '{prod.nombre}' ({det.precio_esperado}) difiere más de 10% del precio vigente ({prod.precio_unitario})."
+                            )
             detalles_data.append(
                 {
                     "producto_solicitado": nombre,
@@ -181,6 +190,7 @@ class SolicitudClienteService:
                     "cantidad": det.cantidad_solicitada,
                     "precio_esperado": float(det.precio_esperado) if det.precio_esperado else None,
                     "precio_vigente": float(prod.precio_unitario) if prod else None,
+                    "precio_con_descuento_pactado": float((prod.precio_unitario * (Decimal("100") - descuento) / Decimal("100")).quantize(Decimal("0.01"))) if prod and descuento > 0 else None,
                     "stock_actual": prod.stock_actual if prod else None,
                 }
             )
@@ -204,6 +214,8 @@ class SolicitudClienteService:
             "Revisas si una cotización de cliente está bien registrada antes de convertirse en pedido. "
             "Considera coherencia de productos, cantidades, precios esperados y observaciones del cliente. "
             "Las alertas automáticas ya calculadas son confiables; no las contradigas. "
+            "Si el cliente tiene descuento pactado, un precio menor al de catálogo es lo esperado: "
+            "no lo reportes como error mientras coincida con 'precio_con_descuento_pactado'. "
             "Responde estrictamente en JSON: "
             '{"hay_observaciones": bool, "descripcion": str, "sugerencias": [str]}'
         )
@@ -409,13 +421,21 @@ class SolicitudClienteService:
             "3. Enfócate en discrepancias reales: Condicion_Comercial, Cantidad_Erronea, Precio_Desactualizado o Stock_Insuficiente.\n"
             "4. Si el cliente compra MÁS de lo cotizado o agrega productos adicionales, es una VENTA ADICIONAL beneficiosa: NO es discrepancia ni error, no la reportes como tal.\n"
             "5. Comprar MENOS de lo cotizado, o no incluir un producto cotizado, SÍ es discrepancia (Cantidad_Erronea).\n"
+            "6. PRECIOS: si el cliente tiene descuento pactado, un precio menor al de catálogo es correcto; nunca lo reportes como Precio_Desactualizado por ser más bajo.\n"
             "Responde estrictamente en formato JSON con la siguiente estructura: "
             '{"hay_discrepancia": bool, "tipo_error": str, "descripcion_discrepancia": str, "analisis_ia": str, "sugerencias_correccion": [str]}'
         )
 
+        descuento_cliente = descuento_pactado(db, payload.cliente_id)
+        nota_descuento = (
+            f"Descuento pactado del cliente: {descuento_cliente:.0f}%. Los precios con ese descuento aplicado son correctos aunque sean menores al de catálogo.\n"
+            if descuento_cliente > 0
+            else "Sin descuento pactado.\n"
+        )
         user_prompt = (
             f"=== POLÍTICA Y CONDICIONES COMERCIALES ===\n"
             f"Forma de Pago en Pedido: {forma_pago}\n"
+            f"{nota_descuento}"
             f"Alertas Comerciales: {json.dumps(discrepancias_condicion, ensure_ascii=False)}\n\n"
             f"=== LO QUE PIDIÓ EL CLIENTE EN SU COTIZACIÓN ===\n{json.dumps(solicitado_data, ensure_ascii=False, indent=2)}\n\n"
             f"=== LO QUE VA A REGISTRAR EN EL PEDIDO ===\n{json.dumps(pedido_data, ensure_ascii=False, indent=2)}\n\n"
